@@ -8,6 +8,24 @@ on:
 permissions:
   contents: read
 
+# One run per ref. A push that supersedes an in-flight run on the same pull
+# request cancels it: the older commit's result is not interesting and this
+# pipeline is expensive enough -- two jobs, a nightly toolchain, a rustc-dev
+# build -- that leaving stale runs queued delays the runs anyone is waiting on.
+#
+# main is deliberately exempt. Cancelling a push-to-main run is not just a lost
+# status, it is a lost cache: actions/cache writes in a post-step, so a run
+# killed part-way through can finish having saved nothing, and the e2e job's
+# whole design assumes the lints job has already populated the shared
+# cargo-registry and lints-build entries. main is also the only branch whose
+# caches every pull request can restore from -- GitHub scopes cache reads to
+# the current branch plus its base -- so a cancelled main run starves every PR
+# that follows it, not just itself. On the branch this repository exists to
+# gate other teams' CI from, a completed run is worth more than a fast one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   # Incremental artifacts are never reused across runners and add ~200 MB to
@@ -52,17 +70,25 @@ jobs:
       # on every single cache hit. Using a private root also leaves the runner
       # image's rustup shims in ~/.cargo/bin untouched.
       #
-      # No restore-keys, and the pinned version is part of the key: a version
-      # bump gets a cold, clean entry rather than inheriting a stale root. Even
-      # if this key and DYLINT_VERSION were to drift apart, a stale cache cannot
-      # mask the change -- `cargo install --locked <tool>@<version>` replaces a
-      # binary installed at a different version. It would cost a rebuild, never
-      # correctness.
+      # No restore-keys, and the key is derived from DYLINT_VERSION rather than
+      # repeating the number: bumping the pin in one place rotates every cache
+      # key with it, so a version bump gets a cold, clean entry instead of
+      # inheriting a stale root, and no key can be left behind pointing at a
+      # version nothing installs any more.
+      #
+      # Deriving it also removes the only way this could go wrong quietly. Were
+      # a key ever to fall out of step with the installed version, the damage
+      # would still be bounded -- `cargo install --locked <tool>@<version>`
+      # replaces a binary installed at a different version, so a stale entry
+      # cannot mask a bump; it would cost a rebuild, never correctness. But the
+      # two lints-build keys below have to stay byte-identical for the
+      # cross-job sharing to work at all, and that failure is silent: the jobs
+      # simply stop sharing. One source of truth is what prevents it.
       - name: Cache dylint-link
         uses: actions/cache@v4
         with:
           path: ~/.dylint-tools
-          key: dylint-tools-${{ runner.os }}-dylint-link-6.0.4
+          key: dylint-tools-${{ runner.os }}-dylint-link-${{ env.DYLINT_VERSION }}
 
       # Shared with the e2e job under the same key. cargo dylint builds the lint
       # library into lints/target, and dylint_testing builds the rustc driver
@@ -76,8 +102,8 @@ jobs:
           path: |
             lints/target
             ~/.dylint_drivers
-          key: lints-build-${{ runner.os }}-6.0.4-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
-          restore-keys: lints-build-${{ runner.os }}-6.0.4-
+          key: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
 
       # Only dylint-link. lints/.cargo/config.toml makes it the linker for
       # everything in this workspace, and dylint_testing drives the UI fixtures
@@ -134,7 +160,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.dylint-tools
-          key: dylint-tools-${{ runner.os }}-cargo-dylint-dylint-link-6.0.4
+          key: dylint-tools-${{ runner.os }}-cargo-dylint-dylint-link-${{ env.DYLINT_VERSION }}
 
       - name: Cache lint library build
         uses: actions/cache@v4
@@ -142,15 +168,15 @@ jobs:
           path: |
             lints/target
             ~/.dylint_drivers
-          key: lints-build-${{ runner.os }}-6.0.4-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
-          restore-keys: lints-build-${{ runner.os }}-6.0.4-
+          key: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
 
       - name: Cache consumer build
         uses: actions/cache@v4
         with:
           path: fixtures/consumer/target
-          key: consumer-build-${{ runner.os }}-6.0.4-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
-          restore-keys: consumer-build-${{ runner.os }}-6.0.4-
+          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
+          restore-keys: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
 
       - name: Install dylint
         run: cargo install --locked --root ~/.dylint-tools cargo-dylint@${DYLINT_VERSION} dylint-link@${DYLINT_VERSION}
