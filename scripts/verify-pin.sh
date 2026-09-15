@@ -104,13 +104,33 @@ def dig(root, *keys):
     return node
 
 
-# dylint reads `workspace.metadata.dylint.libraries`; a single-package manifest
-# with no [workspace] table carries the same thing under `package.metadata`.
+# cargo-dylint 6.0.4 reads `workspace.metadata.dylint.libraries` and nothing
+# else. `package.metadata.dylint` is not a supported spelling -- it is not a
+# fallback, it is ignored, and the run that follows prints
+# `Warning: No libraries were found.` and exits 0 having checked nothing.
+#
+# So that spelling must be an error here, not something to read anyway. A
+# manifest that pins the library where dylint will never look enforces no
+# policy at all, and reporting `verify-pin: ok` for it would be worse than not
+# checking: it would turn "silently unenforced" into "actively confirmed
+# correct". Same failure shape as the `cargo dylint list` precondition in
+# scripts/e2e.sh, and there for the same reason.
 libraries = dig(doc, "workspace", "metadata", "dylint", "libraries")
-if libraries is None:
-    libraries = dig(doc, "package", "metadata", "dylint", "libraries")
 
 if libraries is None:
+    if dig(doc, "package", "metadata", "dylint", "libraries") is not None:
+        die(
+            f"verify-pin: {manifest_path} pins the lint library under "
+            "package.metadata.dylint",
+            "  cargo-dylint reads workspace.metadata.dylint only. This entry "
+            "is ignored: the run",
+            "  would print 'Warning: No libraries were found.' and pass "
+            "without checking anything.",
+            "  Add an explicit [workspace] table -- a single-package "
+            "repository can leave it empty --",
+            "  and move the entry to [workspace.metadata.dylint].",
+        )
+
     die(
         f"verify-pin: {manifest_path} has no "
         "workspace.metadata.dylint.libraries",

@@ -243,7 +243,30 @@ jobs:
             exit 1
           fi
 
-          echo "ok: verify-pin.sh rejects drift and an unknown action ref"
+          # cargo-dylint reads workspace.metadata.dylint only. The same entry
+          # under package.metadata.dylint is ignored, so the run warns "No
+          # libraries were found" and exits 0 having checked nothing -- and a
+          # check that answered "ok" there would confirm a config that enforces
+          # nothing. It has to fail.
+          cat > "$tmp/pkg-meta.toml" <<'EOF'
+          [package]
+          name = "solo"
+          version = "0.1.0"
+          edition = "2021"
+
+          [package.metadata.dylint]
+          libraries = [
+            { git = "https://github.com/hypotheosis/hyp-rust-policy-lints", tag = "v0.1.0", pattern = "lints/*" },
+          ]
+          EOF
+
+          if ./scripts/verify-pin.sh "$tmp/pkg-meta.toml" v0.1.0; then
+            echo "FAIL: verify-pin.sh accepted a pin under package.metadata.dylint,"
+            echo "      which cargo-dylint never reads"
+            exit 1
+          fi
+
+          echo "ok: verify-pin.sh rejects drift, an unknown action ref and a package.metadata pin"
 
       # The action ships its own cargo-dylint pin, and this workflow ships
       # another. Nothing forces them to agree, and a repository that tested one
