@@ -31,8 +31,13 @@ fn is_hegel_crate(cx: &LateContext<'_>, krate: rustc_hir::def_id::CrateNum) -> b
 ///
 /// `#[hegel::test]` expands to a plain `#[test]` function, so the generated
 /// test lives *inside* the hegel proc-macro expansion. Walking outward from the
-/// span to the root context finds it. Also catches `#[hegel::state_machine]`
-/// for free.
+/// span to the root context finds it.
+///
+/// Note `#[hegel::state_machine]` is *not* detected here, and does not need to
+/// be: it derives a `StateMachine` impl from an `impl` block and generates no
+/// test at all, so `find_test_fns` never sees it. A state machine is driven by
+/// a separate test — canonically `#[hegel::test] fn t(tc) {
+/// hegel::stateful::run(m, tc) }` — and it is that test which this catches.
 pub fn expansion_chain_includes_hegel(cx: &LateContext<'_>, span: Span) -> bool {
     let mut span = span;
     while !span.ctxt().is_root() {

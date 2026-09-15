@@ -255,9 +255,14 @@ A test counts as hegel-based if **either** condition holds:
 
 1. **Expansion chain.** Walking `span.ctxt()` upward through `outer_expn_data()`
    yields an `ExpnData` whose `macro_def_id` belongs to a crate named `hegel`.
-   This catches `#[hegel::test]` and `#[hegel::state_machine]`, because the
-   builtin `#[test]` expansion they produce is nested inside the hegel
-   proc-macro expansion.
+   This catches `#[hegel::test]`, because the builtin `#[test]` expansion it
+   produces is nested inside the hegel proc-macro expansion.
+
+   `#[hegel::state_machine]` is **not** caught here and does not need to be: it
+   derives a `StateMachine` impl from an `impl` block and generates no test, so
+   it never reaches `find_test_fns`. The test that drives a state machine is an
+   ordinary `#[hegel::test]`, which this does catch. Verified against
+   `hegeltest` 0.14.27's `stateful` module docs.
 
 2. **Body scan fallback.** The test function's body contains a call whose
    resolved `DefId` belongs to the `hegel` crate. This catches the documented
