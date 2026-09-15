@@ -35,19 +35,3 @@ pub fn find_test_fns(cx: &LateContext<'_>) -> Vec<DefId> {
     }
     test_fns
 }
-
-/// Probe-only: report the `def_path_str` of every const type the harness
-/// generated, so the spike can confirm what `ends_with("TestDescAndFn")`
-/// is actually matching against.
-pub fn probe_const_type_paths(cx: &LateContext<'_>) -> Vec<String> {
-    let mut paths = Vec::new();
-    for item_id in cx.tcx.hir_free_items() {
-        let item = cx.tcx.hir_item(item_id);
-        if let ItemKind::Const(_ident, _generics, ty, ConstItemRhs::Body(_)) = item.kind
-            && let Some(ty_def_id) = ty.basic_res().opt_def_id()
-        {
-            paths.push(cx.tcx.def_path_str(ty_def_id));
-        }
-    }
-    paths
-}

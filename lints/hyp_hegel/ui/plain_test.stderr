@@ -1,0 +1,11 @@
+error: test does not use the hegel property-testing framework
+  --> $DIR/plain_test.rs:2:1
+   |
+LL | fn plain_assertion() {
+   | ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: rewrite this as a property test using `#[hegel::test]`
+   = note: `#[deny(non_hegel_test)]` on by default
+
+error: aborting due to 1 previous error
+
