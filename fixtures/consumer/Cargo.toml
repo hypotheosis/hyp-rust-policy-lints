@@ -1,5 +1,5 @@
 [workspace]
-members = ["good", "bad", "exempt_ok", "exempt_bad"]
+members = ["good", "bad", "exempt_ok", "exempt_bad", "exempt_crate"]
 resolver = "2"
 
 [workspace.dependencies]

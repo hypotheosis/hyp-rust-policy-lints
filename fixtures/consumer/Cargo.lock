@@ -81,6 +81,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "exempt_crate"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+]
+
+[[package]]
 name = "exempt_ok"
 version = "0.1.0"
 dependencies = [
