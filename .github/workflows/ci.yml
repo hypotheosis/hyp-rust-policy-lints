@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts are never reused across runners and add ~200 MB to
+  # the cached target directory for nothing.
+  CARGO_INCREMENTAL: 0
+  DYLINT_VERSION: "6.0.4"
+
+jobs:
+  # The lint library. Builds on the nightly pinned by lints/rust-toolchain.toml,
+  # which rustup installs -- rustc-dev and llvm-tools-preview included -- on the
+  # first cargo invocation inside lints/. No explicit toolchain step is needed.
+  lints:
+    name: Lint library
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # Shared with the e2e job: the key is identical in both, so whichever runs
+      # first populates it for the other. registry/src and git/checkouts are
+      # deliberately absent -- cargo re-extracts them from registry/cache and
+      # git/db, and caching them roughly doubles the entry for no gain.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      # `cargo install --root` keeps the binaries and cargo's install ledger
+      # (.crates.toml / .crates2.json) together in one directory, so the cache
+      # entry can only ever be self-consistent.
+      #
+      # Caching ~/.cargo/bin instead -- as the obvious version of this does --
+      # is broken: the ledger lives in ~/.cargo, not ~/.cargo/bin, so a restored
+      # cache gives you the binary without the record of it, and the next
+      # `cargo install` aborts with
+      #     error: binary `dylint-link` already exists in destination
+      # on every single cache hit. Using a private root also leaves the runner
+      # image's rustup shims in ~/.cargo/bin untouched.
+      #
+      # No restore-keys, and the pinned version is part of the key: a version
+      # bump gets a cold, clean entry rather than inheriting a stale root. Even
+      # if this key and DYLINT_VERSION were to drift apart, a stale cache cannot
+      # mask the change -- `cargo install --locked <tool>@<version>` replaces a
+      # binary installed at a different version. It would cost a rebuild, never
+      # correctness.
+      - name: Cache dylint-link
+        uses: actions/cache@v4
+        with:
+          path: ~/.dylint-tools
+          key: dylint-tools-${{ runner.os }}-dylint-link-6.0.4
+
+      # Shared with the e2e job under the same key. cargo dylint builds the lint
+      # library into lints/target, and dylint_testing builds the rustc driver
+      # into ~/.dylint_drivers, so both jobs want both directories. Keyed on the
+      # lockfile and the toolchain pin, which is what the expensive part of this
+      # tree (clippy_utils against rustc-dev) actually depends on; the prefix
+      # fallback lets a source-only change reuse the dependency build.
+      - name: Cache lint library build
+        uses: actions/cache@v4
+        with:
+          path: |
+            lints/target
+            ~/.dylint_drivers
+          key: lints-build-${{ runner.os }}-6.0.4-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-6.0.4-
+
+      # Only dylint-link. lints/.cargo/config.toml makes it the linker for
+      # everything in this workspace, and dylint_testing drives the UI fixtures
+      # in-process, so cargo-dylint is not needed here.
+      - name: Install dylint-link
+        run: cargo install --locked --root ~/.dylint-tools dylint-link@${DYLINT_VERSION}
+
+      - name: Put dylint-link on PATH
+        run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Format
+        working-directory: lints
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Bare `cargo test`, not `--test ui`. It covers the whole workspace,
+      # including the doctests of the declare_lint! doc comments -- the check
+      # that catches a ```rust fence that should have been ```rust,ignore. The
+      # UI harness alone never compiles those.
+      - name: UI tests
+        working-directory: lints
+        run: cargo test
+
+  # Real cargo dylint over a stable-toolchain consumer workspace.
+  #
+  # `needs` is ordering only: GitHub gives each job a fresh runner and nothing
+  # on disk carries over, so this job re-resolves the nightly and rebuilds the
+  # lint library from lints/. The only reuse is through the caches above, which
+  # is why the registry and lint-library entries use keys identical to the ones
+  # the lints job writes. What `needs` buys is not repeating a ten-minute
+  # nightly build to tell you about a formatting slip.
+  e2e:
+    name: Consumer smoke test
+    runs-on: ubuntu-latest
+    needs: lints
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Cache dylint tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.dylint-tools
+          key: dylint-tools-${{ runner.os }}-cargo-dylint-dylint-link-6.0.4
+
+      - name: Cache lint library build
+        uses: actions/cache@v4
+        with:
+          path: |
+            lints/target
+            ~/.dylint_drivers
+          key: lints-build-${{ runner.os }}-6.0.4-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-6.0.4-
+
+      - name: Cache consumer build
+        uses: actions/cache@v4
+        with:
+          path: fixtures/consumer/target
+          key: consumer-build-${{ runner.os }}-6.0.4-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
+          restore-keys: consumer-build-${{ runner.os }}-6.0.4-
+
+      - name: Install dylint
+        run: cargo install --locked --root ~/.dylint-tools cargo-dylint@${DYLINT_VERSION} dylint-link@${DYLINT_VERSION}
+
+      # cargo finds the `dylint` subcommand by looking for cargo-dylint on PATH,
+      # and everything in lints/ links through dylint-link.
+      - name: Put dylint on PATH
+        run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+      # Run from the repository root: the script locates fixtures/consumer
+      # relative to its own path.
+      - name: End-to-end assertions
+        run: ./scripts/e2e.sh
