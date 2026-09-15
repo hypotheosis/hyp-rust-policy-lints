@@ -9,3 +9,9 @@ name = "hegel"
 
 [dependencies]
 hegeltest-macros = { path = "../hegel_stub_macros" }
+
+# Not a releasable package. This stub deliberately mirrors the published
+# `hegeltest` 0.14.x so the UI fixtures exercise production crate naming; a
+# version bump would drift it away from the thing it imitates.
+[package.metadata.release]
+release = false
