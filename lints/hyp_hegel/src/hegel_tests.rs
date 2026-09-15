@@ -1,4 +1,4 @@
-use crate::hegel_detect::expansion_chain_includes_hegel;
+use crate::hegel_detect::{body_calls_hegel, expansion_chain_includes_hegel};
 use crate::test_fns::find_test_fns;
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def_id::DefId;
@@ -62,7 +62,13 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
 
         for &def_id in &self.test_fns {
             let span = cx.tcx.def_span(def_id);
-            if expansion_chain_includes_hegel(cx, span) {
+            // `#[hegel::test]` shows up in the expansion chain; the builder
+            // form is a plain `#[test]` and only shows up in the body.
+            let is_hegel = expansion_chain_includes_hegel(cx, span)
+                || def_id
+                    .as_local()
+                    .is_some_and(|local| body_calls_hegel(cx, local));
+            if is_hegel {
                 continue;
             }
             span_lint_and_help(
