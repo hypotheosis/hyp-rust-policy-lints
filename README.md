@@ -249,6 +249,20 @@ compiles the `declare_lint!` doc comments as doctests, which is what catches a
 produces, not just one, and separately asserts that the library loaded — a
 clean run and a run where nothing loaded are otherwise indistinguishable.
 
+`scripts/release-check.sh` covers the one thing pull-request CI cannot: the
+`git` + `tag` + `pattern` pin consumers actually write. Everything in-tree pins
+by `path`, because at pull-request time the tag does not exist yet. The release
+workflow runs it against the new tag; before tagging you can run the identical
+fetch-and-build path against any pushed ref:
+
+```bash
+./scripts/release-check.sh https://github.com/hypotheosis/hyp-rust-policy-lints rev "$(git rev-parse @)"
+```
+
+The pin key — `tag`, `rev` or `branch` — is an argument rather than something
+inferred from the value, because the three are not interchangeable in
+`workspace.metadata.dylint` and a 40-hex string is a legal tag name.
+
 ### UI fixtures
 
 Each `.rs` under `lints/hyp_hegel/ui/` is compiled as a standalone crate and
@@ -281,7 +295,10 @@ crate; unrelated policies get their own.
 lockstep with the `clippy_utils` rev in `lints/Cargo.toml` — the two are only
 compatible in matched pairs.
 
-A nightly bump therefore ships as a deliberate version bump, validated at
-release time against the real `git`/`tag` consumer path, not as a routine
-dependency update. Tag pinning means the
-breakage never arrives unannounced; it does not mean it is cheap.
+A nightly bump therefore ships as a deliberate version bump rather than a
+routine dependency update, and it is validated at release time against the real
+`git`/`tag` consumer path: `.github/workflows/release.yml` re-runs all of CI
+against the tagged commit, then has a throwaway workspace pin the new tag over
+https and prove the lints load and fire through it, and only then publishes the
+release. Tag pinning means the breakage never arrives unannounced; it does not
+mean it is cheap.

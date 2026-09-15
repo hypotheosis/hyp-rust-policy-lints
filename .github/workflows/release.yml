@@ -1,0 +1,242 @@
+name: Release
+
+# A tag is the whole product here. Nothing is published to crates.io and no
+# artifact is uploaded: `tag = "vX.Y.Z"` in a consumer's manifest is what
+# selects the lint library, and `uses: ...@vX.Y.Z` is what selects the action.
+# Pushing the tag ships both, to everyone, immediately -- so everything worth
+# checking has to be checked here, and the GitHub Release exists to announce a
+# tag that was already proven good rather than to create one.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# Never cancel a release run. ci.yml cancels superseded pull-request runs
+# because the older commit's result stopped being interesting; there is no such
+# thing as a superseded tag. A cancelled run here leaves a pushed tag with no
+# release and no verdict, which is the state this workflow exists to prevent.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Everything ci.yml checks, against the tagged commit, by calling ci.yml
+  # itself rather than restating it. A copy would be a second definition of
+  # "validated" that nobody diffs against the first, and the copy is exactly
+  # what would rot: the release path runs once per release, so a drifted
+  # duplicate could sit wrong for months. ci.yml gained an `on: workflow_call:`
+  # trigger for this and nothing else -- its jobs, steps and permissions are
+  # untouched.
+  #
+  # A local `uses:` resolves the called workflow at the caller's own ref, so
+  # this runs the tagged commit's CI definition against the tagged commit.
+  validate:
+    name: Full CI
+    uses: ./.github/workflows/ci.yml
+
+  # The one check pull-request CI structurally cannot perform.
+  #
+  # Everything else in this repository -- fixtures/consumer, fixtures/action_check,
+  # and therefore scripts/e2e.sh and all three CI jobs -- pins the lint library
+  # by `path`, because at pull-request time the release tag does not exist and
+  # there is nothing for a `tag` pin to resolve to. So the form every consumer
+  # actually writes,
+  #
+  #     { git = "...", tag = "vX.Y.Z", pattern = "lints/*" }
+  #
+  # is exercised here or nowhere. If this job fails, the tag is not usable by
+  # anyone and must be deleted before someone pins it; see the summary the
+  # failure step writes.
+  git-pin:
+    name: Real git/tag consumer path
+    runs-on: ubuntu-latest
+    needs: validate
+    # Longer than ci.yml's 45. This job deliberately builds the rustc_private
+    # cdylib cold (see the caching note below), which is the slowest thing in
+    # the repository.
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      GIT_URL: https://github.com/hypotheosis/hyp-rust-policy-lints
+    steps:
+      - uses: actions/checkout@v5
+
+      # Not a fourth copy of the cargo-dylint pin. ci.yml has one (and asserts
+      # action.yml agrees with it); action.yml has the one consumers get. This
+      # job is pretending to be a consumer, so it installs whatever action.yml
+      # hands them -- and a version bump that forgot this file is impossible
+      # rather than merely caught.
+      - name: Resolve the cargo-dylint version consumers get
+        id: dylint
+        run: |
+          version=$(python3 -c \
+            "import yaml; print(yaml.safe_load(open('action.yml'))['inputs']['cargo-dylint-version']['default'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "action.yml ships cargo-dylint $version"
+
+      # Two caches, and deliberately not the third.
+      #
+      # The registry and the tool root are restored: they are build inputs, the
+      # keys are byte-identical to ci.yml's, and a tag can read caches written
+      # on the default branch, so a release usually starts warm on both.
+      #
+      # `lints/target` and `~/.dylint_drivers` are NOT restored, though ci.yml
+      # caches them under a key this job could reuse. Those hold the compiled
+      # lint library and the built driver -- the exact artifacts this job is
+      # supposed to produce from the git checkout, from scratch, the way a
+      # consumer's first run on a new tag does. Restoring them would let a run
+      # pass on something CI built earlier from the working tree, which is the
+      # one thing that must not happen here. The cost is minutes; the thing it
+      # buys is that a green tick means the tag really builds.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Cache dylint tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.dylint-tools
+          key: dylint-tools-${{ runner.os }}-cargo-dylint-dylint-link-${{ steps.dylint.outputs.version }}
+
+      - name: Install dylint
+        env:
+          DYLINT_VERSION: ${{ steps.dylint.outputs.version }}
+        run: |
+          cargo install --locked --root ~/.dylint-tools \
+            "cargo-dylint@${DYLINT_VERSION}" "dylint-link@${DYLINT_VERSION}"
+
+      # cargo finds the `dylint` subcommand by looking for cargo-dylint on
+      # PATH, and the lint library links through dylint-link.
+      - name: Put dylint on PATH
+        run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+      # The script builds a throwaway consumer workspace in a temp directory,
+      # pins the library at this tag over https, and asserts the lints both
+      # load and fire through it. It is a script rather than a `run:` block so
+      # the same code path can be exercised outside Actions with `rev` or
+      # `branch` in place of `tag` -- which is the only way to test this logic
+      # before a tag exists.
+      - name: Validate the git/tag consumer path
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./scripts/release-check.sh "$GIT_URL" tag "$TAG"
+
+      # A failure here is not "the release did not go out". It is "a tag that
+      # does not work is public", and it stays public until someone deletes it.
+      # The release job below is skipped automatically, so nothing announces
+      # the tag -- but a consumer who pins it from the tag list gets a silent
+      # `Warning: No libraries were found.` and a vacuous green build, which is
+      # this project's worst failure mode.
+      - name: The tag is not usable -- delete it
+        if: failure()
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "## \`$TAG\` is broken and must be deleted"
+            echo
+            echo "The lint library could not be loaded through the pin consumers write:"
+            echo
+            echo '```toml'
+            echo "{ git = \"$GIT_URL\", tag = \"$TAG\", pattern = \"lints/*\" }"
+            echo '```'
+            echo
+            echo "No release was published, but the tag itself is already public."
+            echo "Anyone who pins it gets \`Warning: No libraries were found.\` and a"
+            echo "build that passes without checking anything. Delete it now:"
+            echo
+            echo '```bash'
+            echo "git push --delete origin $TAG"
+            echo "git tag -d $TAG"
+            echo '```'
+            echo
+            echo "Then fix the cause and tag again with a new version."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Delete the tag::$TAG does not work for consumers; run 'git push --delete origin $TAG'"
+
+  # Cutting the release is the last thing that happens, in a job of its own,
+  # and it does exactly one write.
+  #
+  # `needs` on both gates it: a failure anywhere upstream skips this job, so
+  # there is no path to a published release for a tag that failed validation,
+  # and no path to a half-finished one -- the notes are rendered locally first,
+  # and the single `gh release create` either creates the release or does not.
+  #
+  # This is also the only job in either workflow with write permission, and it
+  # runs no build, no dependency and no third-party action: just `gh`, which is
+  # preinstalled. A marketplace release action would mean handing `contents:
+  # write` to code from outside this repository for the sake of one API call.
+  release:
+    name: Cut the release
+    runs-on: ubuntu-latest
+    needs: [validate, git-pin]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # Rendered before anything is created, so a README reshuffle that breaks
+      # the extraction fails here rather than publishing a release with empty
+      # setup instructions. The notes take the lint table and both setup
+      # snippets out of README.md verbatim, with the placeholder tag replaced
+      # by this one.
+      - name: Render release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release-notes.py "$TAG" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # --verify-tag: refuse to invent a tag. `gh release create` will happily
+      # create a missing tag at the default branch's HEAD, which on this repo
+      # would mean publishing a release pointing at a commit nothing above ever
+      # validated. This workflow only ever runs because a tag was pushed, so
+      # requiring it to exist costs nothing and removes that hole.
+      #
+      # Anything with a pre-release suffix (v0.2.0-rc.1) is marked as such, so
+      # it does not become the repository's "Latest release" and get copied
+      # into someone's manifest by default.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          case "$TAG" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${prerelease[@]}"
+
+  # Failure of either validation job leaves a public tag that nothing has
+  # announced but anyone can pin. This job exists to make that state
+  # unmissable: the run's conclusion is already red from the job that failed,
+  # but a skipped `release` job looks a lot like "nothing happened", and here
+  # something did -- a tag was pushed.
+  unusable-tag:
+    name: Tag needs deleting
+    runs-on: ubuntu-latest
+    needs: [validate, git-pin]
+    if: failure()
+    timeout-minutes: 5
+    steps:
+      - name: Report
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "::error title=Delete the tag::Validation failed for $TAG. No release was published, but the tag is public: run 'git push --delete origin $TAG && git tag -d $TAG' before anyone pins it."
+          exit 1

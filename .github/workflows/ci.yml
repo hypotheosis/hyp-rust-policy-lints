@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Called by .github/workflows/release.yml, so that a release re-runs these
+  # exact jobs against the tagged commit instead of a copy of them that could
+  # drift. Nothing else about this workflow changes: a reusable workflow keeps
+  # its own `permissions:` block, and the caller grants no more than the
+  # `contents: read` declared below.
+  workflow_call:
 
 permissions:
   contents: read
@@ -280,6 +286,19 @@ jobs:
             exit 1
           fi
           echo "ok: both pin cargo-dylint $default"
+
+      # The release notes are assembled by lifting the lint table and both
+      # setup snippets straight out of README.md, so that a release cannot
+      # describe a setup the README no longer documents. The cost of that is a
+      # dependency on README.md's shape, and the release workflow runs once per
+      # release -- a heading renamed today would surface as a failed release
+      # weeks later, with a pushed tag already public. Render them here instead,
+      # where a docs change and its breakage arrive in the same pull request.
+      # The tag is arbitrary: only the extraction is under test.
+      - name: Release notes still render from README.md
+        run: |
+          python3 scripts/release-notes.py v0.0.0-ci-render-check > /dev/null
+          echo "ok: release notes render"
 
       # Everything except working-directory is left at its default, because the
       # defaults are what consumers get -- `--all -- --all-targets` included.
