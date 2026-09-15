@@ -1714,7 +1714,7 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.local/share/dylint
+            ~/.dylint_drivers
           key: e2e-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
 
       - name: Install dylint
@@ -1839,7 +1839,7 @@ runs:
           ~/.cargo/bin
           ~/.cargo/registry
           ~/.cargo/git
-          ~/.local/share/dylint
+          ~/.dylint_drivers
         key: hyp-policy-lints-${{ runner.os }}-${{ github.action_ref }}
 
     - name: Install cargo-dylint

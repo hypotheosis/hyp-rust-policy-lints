@@ -431,7 +431,12 @@ toolchain:
 1. `cargo install --locked cargo-dylint dylint-link`
 2. Run the §4.2 assertion matrix.
 
-Both jobs cache `~/.cargo` and `~/.local/share/dylint`.
+Both jobs cache `~/.cargo` and `~/.dylint_drivers`.
+
+The driver path matters: dylint 6.0.4's `driver_builder::dylint_drivers()`
+resolves to `$HOME/.dylint_drivers`, **not** `~/.local/share/dylint`. Caching
+the latter silently caches nothing. `dylint_testing` calls the same
+`driver_builder::get` that `cargo-dylint` does, so both jobs benefit.
 
 ### 5.2 `action.yml` — root composite action
 
@@ -458,8 +463,11 @@ Inputs:
 | `cargo-dylint-version` | `6.0.4` | Pinned installer version |
 | `verify-pin` | `true` | Enforce §5.2.1 |
 
-Steps: install `cargo-dylint` and `dylint-link` with `--locked`; restore caches
-for `~/.cargo/bin`, the registry, and `~/.local/share/dylint`, keyed on the
+Steps: install `cargo-dylint` and `dylint-link` with `--locked` **into a private
+`--root`** (cargo's install ledger lives in `~/.cargo`, not `~/.cargo/bin`, so
+caching the bin directory alone yields a binary without its record and the next
+`cargo install` aborts); restore caches
+for the cargo registry, the built lint library, and `~/.dylint_drivers`, keyed on the
 action ref; optionally verify the pin; run `cargo dylint ${{ inputs.args }}`.
 
 Caching keyed on the action ref is the load-bearing part. Without it every
