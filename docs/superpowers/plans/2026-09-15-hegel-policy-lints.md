@@ -864,7 +864,7 @@ git commit -m "feat: recognise hegel tests via macro expansion chain"
 The documented builder form uses a plain `#[test]` and calls `Hegel::new(..).run()` in the body. It has no hegel expansion at all, so Task 4's check reports it as a violation. That is a false positive and must be fixed.
 
 **Files:**
-- Create: `lints/hyp_hegel/ui/builder_form.rs`
+- Create: `lints/hyp_hegel/ui/builder_form.rs`, `lints/hyp_hegel/ui/closure_only.rs`
 - Modify: `lints/hyp_hegel/src/hegel_detect.rs`, `lints/hyp_hegel/src/hegel_tests.rs`
 
 - [ ] **Step 1: Confirm the crate-name list already covers the builder form**
@@ -993,6 +993,31 @@ In `hegel_tests.rs`, change the skip condition to:
 ```
 
 and import `body_calls_hegel` alongside `expansion_chain_includes_hegel`.
+
+- [ ] **Step 5b: Add a fixture that actually guards closure descent**
+
+`builder_form.rs` cannot prove the nested filter works: `.run()` sits outside
+the closure and matches first, so the fixture passes whether or not the visitor
+descends. Add one whose *only* hegel reference is inside a closure.
+
+`lints/hyp_hegel/ui/closure_only.rs`:
+
+```rust
+#[test]
+fn closure_only() {
+    std::iter::once(0).for_each(|_| {
+        let tc = hegel::TestCase;
+        let _: i64 = tc.draw();
+    });
+}
+
+fn main() {}
+```
+
+No `.stderr`, so the fixture asserts no diagnostic is emitted. Verify it is
+load-bearing by deleting the `type NestedFilter` line and the `maybe_tcx`
+override, rebuilding, and confirming `closure_only.rs` FAILS while
+`builder_form.rs` still passes. Restore afterwards.
 
 - [ ] **Step 6: Run to verify it passes**
 
