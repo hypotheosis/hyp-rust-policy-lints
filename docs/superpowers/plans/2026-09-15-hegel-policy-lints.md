@@ -541,7 +541,7 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
 }
 ```
 
-Emitting from `check_crate` rather than `check_item` is deliberate: `find_test_fns` must run over the whole crate first, and doing both in one place avoids ordering bugs. Task 6 revisits this when per-item lint levels are needed.
+Emitting from `check_crate` is a temporary simplification for this slice only, and **Task 6 must move it to `check_item`**. `LateContext` resolves lint levels against `last_node_with_lint_attrs`, which during `check_crate` is `CRATE_HIR_ID`, so a pass that emits there ignores every node-level `#[allow]`/`#[warn]`/`#[deny]`/`#[expect]`. `find_test_fns` genuinely does need the whole-crate scan, so the finished shape is: collect in `check_crate`, judge and emit in `check_item`, summarise in `check_crate_post`. See the spike notes addendum.
 
 - [ ] **Step 5: Replace the probe in lib.rs**
 
@@ -1227,6 +1227,35 @@ Add the field `hegel_test_count: usize` to `HegelTests` (it is used in Task 7) a
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint::Level;
 ```
+
+- [ ] **Step 4b: Move emission to `check_item`**
+
+`check_crate` keeps only the `self.test_fns = find_test_fns(cx)` scan. The
+hegel check, the level query, the emission and the `hegel_test_count` increment
+all move into:
+
+```rust
+    fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
+        let def_id = item.owner_id.to_def_id();
+        if !self.test_fns.contains(&def_id) {
+            return;
+        }
+        // ... hegel check, level query, emission, as in Step 4 ...
+    }
+```
+
+Query the level at `item.hir_id()`. `#[test]` is only legal on free functions,
+so no test arrives as an `ImplItem` and `check_item` alone suffices.
+
+Add two fixtures the rest of the suite is structurally blind to, since every
+other fixture uses the default level:
+
+- `ui/warn_level.rs` — a plain `#[test]` with `#[warn(non_hegel_test)]`. Its
+  `.stderr` must say `warning:`, not `error:`.
+- `ui/deny_level.rs` — `mod legacy` with an inner
+  `#![allow(non_hegel_test, reason = "...")]`, one test inheriting it and one
+  carrying `#[deny(non_hegel_test)]`. Exactly one error, for the opted-back-in
+  test, proving the innermost attribute wins in both directions.
 
 - [ ] **Step 5: Register the new lint**
 
