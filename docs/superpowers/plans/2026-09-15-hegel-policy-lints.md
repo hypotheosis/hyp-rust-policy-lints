@@ -32,6 +32,8 @@ You are almost certainly unfamiliar with dylint. Read this section; it will save
 
 **The UI harness links its fixtures by hand.** `dylint_testing`'s `src_base` mode does not pass `--extern` for dev-dependencies, and the sanctioned example-target route breaks under this environment's `RUSTC_WRAPPER=sccache`. `tests/ui.rs` therefore passes `--edition=2024`, `-L dependency=` and `--extern hegel=` itself. New fixtures under `ui/` are auto-discovered and need no registration.
 
+**HIR visitors skip closures unless you opt in.** `intravisit::Visitor`'s `visit_nested_body` does nothing unless `NestedFilter::INTRA` is set, and the default is `nested_filter::None`. Any body scan that must see inside a closure needs `type NestedFilter = nested_filter::OnlyBodies` plus a `maybe_tcx` override. `body_calls_hegel` sets this. Note the failure is latent rather than loud — the `builder_form` fixture passes either way because `.run()` sits outside the closure and matches first. See the spike notes addendum.
+
 **The `--all-targets` trap.** The lint can only see tests when the test harness is compiled. Every `cargo dylint` invocation in this project must pass `-- --all-targets`. If you forget, the lint loads, finds zero tests, reports nothing, and looks like it passed.
 
 **Regenerating `.stderr` files.** There is no bless mode. `dylint_testing` 6.0.4 builds its `compiletest::Config` without ever setting `bless`, and `compiletest_rs` 0.11.2 hardcodes `bless: false` in its `Default` impl, so `BLESS=1` and every other env var are silently ignored.
