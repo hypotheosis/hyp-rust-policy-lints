@@ -17,6 +17,17 @@
 //! expansion time, which is ugly but safe. Do not rely on that: keep fixtures
 //! plain, and if one needs commentary, put it below the function or in the
 //! `.stderr`.
+//!
+//! # Attributes are dropped
+//!
+//! This rebuilds the item from scratch rather than transforming it, so **every
+//! attribute on the input is silently discarded**. A fixture that needs an
+//! attribute to reach the compiler on a hegel test — `#[expect(..)]`,
+//! `#[allow(..)]`, `#[warn(..)]` — must use the *builder form* (a plain
+//! `#[test]` calling `Hegel::new(..).run()`), not `#[hegel::test]`.
+//!
+//! This failure is quieter than the one above: the attribute simply never
+//! exists, so the fixture passes and appears to prove something it does not.
 
 use proc_macro::TokenStream;
 
