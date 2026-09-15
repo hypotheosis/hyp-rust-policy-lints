@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "hyp_hegel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clippy_utils",
  "dylint_linting",

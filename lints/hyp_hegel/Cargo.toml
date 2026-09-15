@@ -1,6 +1,6 @@
 [package]
 name = "hyp_hegel"
-version = "0.1.0"
+version = "0.1.1"
 description = "hypotheosis policy lints: require hegel property tests"
 edition = "2024"
 publish = false
