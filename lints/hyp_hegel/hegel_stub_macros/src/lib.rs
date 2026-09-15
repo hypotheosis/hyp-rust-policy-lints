@@ -1,0 +1,49 @@
+//! Minimal stand-in for the real hegel attribute macros, used only by UI
+//! fixtures.
+//!
+//! Expands `#[hegel::test]` into a plain `#[test]` with the `tc` parameter
+//! dropped, which is enough to reproduce the macro-expansion chain the lint
+//! inspects.
+//!
+//! # Constraint on fixtures
+//!
+//! This parses the item as a string, not as tokens: it finds the name after
+//! the first `"fn "` and the body between the first `{` and the last `}`. So a
+//! fixture must not place a doc comment, attribute, or anything else
+//! containing `fn `, `{` or `}` **above** the annotated function — the match
+//! point shifts into that text and the extraction is corrupted.
+//!
+//! In every case tried the corruption yields unparseable Rust and panics at
+//! expansion time, which is ugly but safe. Do not rely on that: keep fixtures
+//! plain, and if one needs commentary, put it below the function or in the
+//! `.stderr`.
+//!
+//! # Attributes are dropped
+//!
+//! This rebuilds the item from scratch rather than transforming it, so **every
+//! attribute on the input is silently discarded**. A fixture that needs an
+//! attribute to reach the compiler on a hegel test — `#[expect(..)]`,
+//! `#[allow(..)]`, `#[warn(..)]` — must use the *builder form* (a plain
+//! `#[test]` calling `Hegel::new(..).run()`), not `#[hegel::test]`.
+//!
+//! This failure is quieter than the one above: the attribute simply never
+//! exists, so the fixture passes and appears to prove something it does not.
+
+use proc_macro::TokenStream;
+
+#[proc_macro_attribute]
+pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = item.to_string();
+    let name = input
+        .split("fn ")
+        .nth(1)
+        .and_then(|rest| rest.split('(').next())
+        .unwrap_or("generated")
+        .trim()
+        .to_string();
+    let open = input.find('{').expect("test function must have a body");
+    let body = &input[open + 1..input.rfind('}').expect("unbalanced body")];
+    format!("#[test] fn {name}() {{ let tc = hegel::TestCase; let _ = &tc; {body} }}")
+        .parse()
+        .unwrap()
+}

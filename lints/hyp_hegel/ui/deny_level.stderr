@@ -1,0 +1,15 @@
+error: test does not use the hegel property-testing framework
+  --> $DIR/deny_level.rs:11:5
+   |
+LL |     fn opts_back_in() {
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = help: rewrite this as a property test using `#[hegel::test]`
+note: the lint level is defined here
+  --> $DIR/deny_level.rs:9:12
+   |
+LL |     #[deny(non_hegel_test)]
+   |            ^^^^^^^^^^^^^^
+
+error: aborting due to 1 previous error
+

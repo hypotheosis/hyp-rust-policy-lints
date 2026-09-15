@@ -1,0 +1,11 @@
+[package]
+name = "exempt_ok"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+hegel = { workspace = true }
+
+[lints]
+workspace = true

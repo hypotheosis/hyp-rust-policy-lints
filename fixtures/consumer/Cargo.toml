@@ -1,0 +1,19 @@
+[workspace]
+members = ["good", "bad", "exempt_ok", "exempt_bad", "exempt_crate"]
+resolver = "2"
+
+[workspace.dependencies]
+hegel = { package = "hegeltest", version = "0.14" }
+
+# `path` rather than `git`/`tag` is deliberate: at pull-request time the release
+# tag does not exist yet, so this validates the working tree. The `git`/`tag`
+# form is exercised separately at release time.
+[workspace.metadata.dylint]
+libraries = [{ path = "../../lints/*" }]
+
+# `dylint_lib` is set only by the dylint driver, so a plain `cargo build` would
+# otherwise warn about the `cfg_attr(dylint_lib = "hyp_hegel", ...)` exemptions
+# the member crates write. Consumers of these lints need this entry too.
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(dylint_lib, values(any()))"]

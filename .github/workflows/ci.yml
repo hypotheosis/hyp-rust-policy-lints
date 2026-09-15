@@ -1,0 +1,336 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Called by .github/workflows/release.yml, so that a release re-runs these
+  # exact jobs against the tagged commit instead of a copy of them that could
+  # drift. Nothing else about this workflow changes: a reusable workflow keeps
+  # its own `permissions:` block, and the caller grants no more than the
+  # `contents: read` declared below.
+  workflow_call:
+
+permissions:
+  contents: read
+
+# One run per ref. A push that supersedes an in-flight run on the same pull
+# request cancels it: the older commit's result is not interesting and this
+# pipeline is expensive enough -- two jobs, a nightly toolchain, a rustc-dev
+# build -- that leaving stale runs queued delays the runs anyone is waiting on.
+#
+# main is deliberately exempt. Cancelling a push-to-main run is not just a lost
+# status, it is a lost cache: actions/cache writes in a post-step, so a run
+# killed part-way through can finish having saved nothing, and the e2e job's
+# whole design assumes the lints job has already populated the shared
+# cargo-registry and lints-build entries. main is also the only branch whose
+# caches every pull request can restore from -- GitHub scopes cache reads to
+# the current branch plus its base -- so a cancelled main run starves every PR
+# that follows it, not just itself. On the branch this repository exists to
+# gate other teams' CI from, a completed run is worth more than a fast one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts are never reused across runners and add ~200 MB to
+  # the cached target directory for nothing.
+  CARGO_INCREMENTAL: 0
+  DYLINT_VERSION: "6.0.4"
+
+jobs:
+  # The lint library. Builds on the nightly pinned by lints/rust-toolchain.toml,
+  # which rustup installs -- rustc-dev and llvm-tools-preview included -- on the
+  # first cargo invocation inside lints/. No explicit toolchain step is needed.
+  lints:
+    name: Lint library
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # Shared with the e2e job: the key is identical in both, so whichever runs
+      # first populates it for the other. registry/src and git/checkouts are
+      # deliberately absent -- cargo re-extracts them from registry/cache and
+      # git/db, and caching them roughly doubles the entry for no gain.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      # `cargo install --root` keeps the binaries and cargo's install ledger
+      # (.crates.toml / .crates2.json) together in one directory, so the cache
+      # entry can only ever be self-consistent.
+      #
+      # Caching ~/.cargo/bin instead -- as the obvious version of this does --
+      # is broken: the ledger lives in ~/.cargo, not ~/.cargo/bin, so a restored
+      # cache gives you the binary without the record of it, and the next
+      # `cargo install` aborts with
+      #     error: binary `dylint-link` already exists in destination
+      # on every single cache hit. Using a private root also leaves the runner
+      # image's rustup shims in ~/.cargo/bin untouched.
+      #
+      # No restore-keys, and the key is derived from DYLINT_VERSION rather than
+      # repeating the number: bumping the pin in one place rotates every cache
+      # key with it, so a version bump gets a cold, clean entry instead of
+      # inheriting a stale root, and no key can be left behind pointing at a
+      # version nothing installs any more.
+      #
+      # Deriving it also removes the only way this could go wrong quietly. Were
+      # a key ever to fall out of step with the installed version, the damage
+      # would still be bounded -- `cargo install --locked <tool>@<version>`
+      # replaces a binary installed at a different version, so a stale entry
+      # cannot mask a bump; it would cost a rebuild, never correctness. But the
+      # two lints-build keys below have to stay byte-identical for the
+      # cross-job sharing to work at all, and that failure is silent: the jobs
+      # simply stop sharing. One source of truth is what prevents it.
+      - name: Cache dylint-link
+        uses: actions/cache@v4
+        with:
+          path: ~/.dylint-tools
+          key: dylint-tools-${{ runner.os }}-dylint-link-${{ env.DYLINT_VERSION }}
+
+      # Shared with the e2e job under the same key. cargo dylint builds the lint
+      # library into lints/target, and dylint_testing builds the rustc driver
+      # into ~/.dylint_drivers, so both jobs want both directories. Keyed on the
+      # lockfile and the toolchain pin, which is what the expensive part of this
+      # tree (clippy_utils against rustc-dev) actually depends on; the prefix
+      # fallback lets a source-only change reuse the dependency build.
+      - name: Cache lint library build
+        uses: actions/cache@v4
+        with:
+          path: |
+            lints/target
+            ~/.dylint_drivers
+          key: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
+
+      # Only dylint-link. lints/.cargo/config.toml makes it the linker for
+      # everything in this workspace, and dylint_testing drives the UI fixtures
+      # in-process, so cargo-dylint is not needed here.
+      - name: Install dylint-link
+        run: cargo install --locked --root ~/.dylint-tools dylint-link@${DYLINT_VERSION}
+
+      - name: Put dylint-link on PATH
+        run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Format
+        working-directory: lints
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Bare `cargo test`, not `--test ui`. It covers the whole workspace,
+      # including the doctests of the declare_lint! doc comments -- the check
+      # that catches a ```rust fence that should have been ```rust,ignore. The
+      # UI harness alone never compiles those.
+      - name: UI tests
+        working-directory: lints
+        run: cargo test
+
+  # Real cargo dylint over a stable-toolchain consumer workspace.
+  #
+  # `needs` is ordering only: GitHub gives each job a fresh runner and nothing
+  # on disk carries over, so this job re-resolves the nightly and rebuilds the
+  # lint library from lints/. The only reuse is through the caches above, which
+  # is why the registry and lint-library entries use keys identical to the ones
+  # the lints job writes. What `needs` buys is not repeating a ten-minute
+  # nightly build to tell you about a formatting slip.
+  e2e:
+    name: Consumer smoke test
+    runs-on: ubuntu-latest
+    needs: lints
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Cache dylint tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.dylint-tools
+          key: dylint-tools-${{ runner.os }}-cargo-dylint-dylint-link-${{ env.DYLINT_VERSION }}
+
+      - name: Cache lint library build
+        uses: actions/cache@v4
+        with:
+          path: |
+            lints/target
+            ~/.dylint_drivers
+          key: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('lints/Cargo.lock', 'lints/rust-toolchain.toml') }}
+          restore-keys: lints-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
+
+      - name: Cache consumer build
+        uses: actions/cache@v4
+        with:
+          path: fixtures/consumer/target
+          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
+          restore-keys: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
+
+      - name: Install dylint
+        run: cargo install --locked --root ~/.dylint-tools cargo-dylint@${DYLINT_VERSION} dylint-link@${DYLINT_VERSION}
+
+      # cargo finds the `dylint` subcommand by looking for cargo-dylint on PATH,
+      # and everything in lints/ links through dylint-link.
+      - name: Put dylint on PATH
+        run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+      # Run from the repository root: the script locates fixtures/consumer
+      # relative to its own path.
+      - name: End-to-end assertions
+        run: ./scripts/e2e.sh
+
+  # The consumer-facing entry point: the composite action at the repository
+  # root, run the way a consumer runs it.
+  #
+  # An action that has never executed is not finished, and nothing else in this
+  # pipeline touches action.yml -- the e2e job calls cargo dylint directly, so
+  # it would stay green through any breakage in the action's inputs, caching,
+  # install or PATH wiring.
+  #
+  # It runs against fixtures/action_check rather than fixtures/consumer, and
+  # expects to *pass*. fixtures/consumer is built to fail: asserting failure
+  # there would mean the job could not distinguish a policy violation from the
+  # action being broken -- a mistyped input, a failed install and a real finding
+  # all surface as a non-zero exit -- and it would report success long after the
+  # action stopped working. Against a workspace that should genuinely pass, any
+  # breakage is red.
+  action:
+    name: Composite action
+    runs-on: ubuntu-latest
+    needs: lints
+    timeout-minutes: 45
+    steps:
+      # `uses: ./` resolves action.yml out of the workspace, so the checkout
+      # has to come first.
+      - uses: actions/checkout@v5
+
+      # Both directions. A pin check that cannot fail is worse than none: it
+      # reports the same green tick whether or not it verified anything, which
+      # is the exact failure mode it exists to catch elsewhere.
+      - name: Pin verification rejects drift
+        run: |
+          tmp=$(mktemp -d)
+          cat > "$tmp/Cargo.toml" <<'EOF'
+          [workspace.metadata.dylint]
+          libraries = [
+            { git = "https://github.com/hypotheosis/hyp-rust-policy-lints", tag = "v0.1.0", pattern = "lints/*" },
+          ]
+          EOF
+
+          ./scripts/verify-pin.sh "$tmp/Cargo.toml" v0.1.0
+
+          if ./scripts/verify-pin.sh "$tmp/Cargo.toml" v0.2.0; then
+            echo "FAIL: verify-pin.sh accepted a tag that does not match the ref"
+            exit 1
+          fi
+
+          # An empty github.action_ref -- what a local-path `uses:` produces --
+          # must fail rather than pass unverified.
+          if ./scripts/verify-pin.sh "$tmp/Cargo.toml" ""; then
+            echo "FAIL: verify-pin.sh passed with no action ref to check against"
+            exit 1
+          fi
+
+          # cargo-dylint reads workspace.metadata.dylint only. The same entry
+          # under package.metadata.dylint is ignored, so the run warns "No
+          # libraries were found" and exits 0 having checked nothing -- and a
+          # check that answered "ok" there would confirm a config that enforces
+          # nothing. It has to fail.
+          cat > "$tmp/pkg-meta.toml" <<'EOF'
+          [package]
+          name = "solo"
+          version = "0.1.0"
+          edition = "2021"
+
+          [package.metadata.dylint]
+          libraries = [
+            { git = "https://github.com/hypotheosis/hyp-rust-policy-lints", tag = "v0.1.0", pattern = "lints/*" },
+          ]
+          EOF
+
+          if ./scripts/verify-pin.sh "$tmp/pkg-meta.toml" v0.1.0; then
+            echo "FAIL: verify-pin.sh accepted a pin under package.metadata.dylint,"
+            echo "      which cargo-dylint never reads"
+            exit 1
+          fi
+
+          echo "ok: verify-pin.sh rejects drift, an unknown action ref and a package.metadata pin"
+
+      # The action ships its own cargo-dylint pin, and this workflow ships
+      # another. Nothing forces them to agree, and a repository that tested one
+      # version and shipped another would be testing the wrong thing.
+      - name: Action pins the same cargo-dylint as CI
+        run: |
+          default=$(python3 -c \
+            "import yaml; print(yaml.safe_load(open('action.yml'))['inputs']['cargo-dylint-version']['default'])")
+          if [ "$default" != "$DYLINT_VERSION" ]; then
+            echo "FAIL: action.yml defaults to cargo-dylint $default, CI pins $DYLINT_VERSION"
+            exit 1
+          fi
+          echo "ok: both pin cargo-dylint $default"
+
+      # The release notes are assembled by lifting the lint table and both
+      # setup snippets straight out of README.md, so that a release cannot
+      # describe a setup the README no longer documents. The cost of that is a
+      # dependency on README.md's shape, and the release workflow runs once per
+      # release -- a heading renamed today would surface as a failed release
+      # weeks later, with a pushed tag already public. Render them here instead,
+      # where a docs change and its breakage arrive in the same pull request.
+      # The tag is arbitrary: only the extraction is under test.
+      - name: Release notes still render from README.md
+        run: |
+          python3 scripts/release-notes.py v0.0.0-ci-render-check > /dev/null
+          echo "ok: release notes render"
+
+      # Everything except working-directory is left at its default, because the
+      # defaults are what consumers get -- `--all -- --all-targets` included.
+      #
+      # verify-pin is off for two independent reasons, either of which alone
+      # would be enough: fixtures/action_check pins the library by `path`, which
+      # has no tag to compare against, and `uses: ./` leaves github.action_ref
+      # empty, so there is no action version to compare it *to*. Turning it off
+      # here also exercises the input.
+      - name: Run the action
+        uses: ./
+        with:
+          working-directory: fixtures/action_check
+          verify-pin: "false"
+
+      # The step above exits 0 both when the lints ran and found nothing and
+      # when no library loaded at all: `cargo dylint` degrades to a plain
+      # `cargo check` when it finds no libraries, warning on stderr and exiting
+      # clean. Without this, an action that silently stopped loading the library
+      # would still be green. cargo-dylint is on PATH because the action put it
+      # there, so this doubles as a check that the PATH export works.
+      - name: Assert the lint library actually loaded
+        working-directory: fixtures/action_check
+        run: |
+          list=$(cargo dylint list --all 2>/dev/null)
+          echo "$list"
+          for lint in non_hegel_test hegel_exemption_without_justification crate_without_hegel_tests; do
+            if ! grep -qE "^[[:space:]]+${lint}([[:space:]]|$)" <<<"$list"; then
+              echo "FAIL: 'cargo dylint list --all' did not report $lint"
+              echo "  The action's run passed vacuously: no lint library was loaded."
+              cargo dylint list --all 2>&1
+              exit 1
+            fi
+          done
+          echo "ok: lint library loaded"

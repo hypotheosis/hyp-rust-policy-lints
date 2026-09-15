@@ -1,0 +1,21 @@
+[workspace]
+members = ["*"]
+exclude = [".cargo", "target"]
+resolver = "2"
+
+[workspace.dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }
+dylint_linting = "6.0"
+dylint_testing = "6.0"
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "deny"
+check-cfg = ["cfg(dylint_lib, values(any()))"]
+
+# Consumers pin `tag = "vX.Y.Z"` and the action is `uses: ...@vX.Y.Z`, and
+# .github/workflows/release.yml triggers on `tags: ["v*"]`. cargo-release's
+# default for a workspace member is `{{crate_name}}-v{{version}}`, which starts
+# with `h` -- it would push a tag that triggers nothing, validates nothing, and
+# resolves to nothing for anyone who pins it.
+[workspace.metadata.release]
+tag-name = "v{{version}}"
