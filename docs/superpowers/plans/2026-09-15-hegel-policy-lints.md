@@ -886,7 +886,7 @@ If it says anything else, stop and reconcile against `docs/superpowers/notes/202
 `lints/hyp_hegel/ui/builder_form.rs`:
 
 ```rust
-use hegeltest::Hegel;
+use hegel::Hegel;
 
 #[test]
 fn built_property() {

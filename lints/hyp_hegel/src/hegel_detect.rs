@@ -19,6 +19,14 @@ use rustc_span::Span;
 /// hegel test.
 const HEGEL_CRATE_NAMES: &[&str] = &["hegel", "hegel_macros"];
 
+/// Is `krate` one of the hegel crates?
+///
+/// Both detection strategies below ask this question; keeping it in one place
+/// means `HEGEL_CRATE_NAMES` has a single consumer to update.
+fn is_hegel_crate(cx: &LateContext<'_>, krate: rustc_hir::def_id::CrateNum) -> bool {
+    HEGEL_CRATE_NAMES.contains(&cx.tcx.crate_name(krate).as_str())
+}
+
 /// Does this span's macro-expansion chain pass through the hegel crate?
 ///
 /// `#[hegel::test]` expands to a plain `#[test]` function, so the generated
@@ -30,7 +38,7 @@ pub fn expansion_chain_includes_hegel(cx: &LateContext<'_>, span: Span) -> bool 
     while !span.ctxt().is_root() {
         let data = span.ctxt().outer_expn_data();
         if let Some(macro_def_id) = data.macro_def_id
-            && HEGEL_CRATE_NAMES.contains(&cx.tcx.crate_name(macro_def_id.krate).as_str())
+            && is_hegel_crate(cx, macro_def_id.krate)
         {
             return true;
         }
@@ -53,6 +61,20 @@ pub fn expansion_chain_includes_hegel(cx: &LateContext<'_>, span: Span) -> bool 
 /// hegel crate. Naming a hegel type in a type annotation does not count, and
 /// neither does anything a non-hegel macro expands to: `assert_eq!` resolves
 /// into `core`.
+///
+/// # Known breadth
+///
+/// This is deliberately a "did you touch the framework" check, not a semantic
+/// verifier of property-test quality — the same coarseness
+/// `expansion_chain_includes_hegel` has.
+///
+/// * **Too broad:** a test that merely resolves a hegel item without ever
+///   generating anything (`let _ctx = hegel::TestCase;`) is accepted.
+/// * **Too narrow:** only the test's own body is walked, so a test delegating
+///   to a same-crate helper that internally uses hegel is *not* recognised —
+///   the call resolves to a local, non-hegel `DefId`. Following the call graph
+///   would be a large scope increase for little gain against the documented
+///   builder form, which calls `Hegel::new(..).run()` directly.
 pub fn body_calls_hegel(cx: &LateContext<'_>, def_id: LocalDefId) -> bool {
     let Some(body) = cx.tcx.hir_maybe_body_owned_by(def_id) else {
         return false;
@@ -79,7 +101,7 @@ struct HegelCallFinder<'cx, 'tcx> {
 
 impl HegelCallFinder<'_, '_> {
     fn is_hegel_def(&self, def_id: DefId) -> bool {
-        HEGEL_CRATE_NAMES.contains(&self.cx.tcx.crate_name(def_id.krate).as_str())
+        is_hegel_crate(self.cx, def_id.krate)
     }
 }
 
