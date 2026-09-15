@@ -4,6 +4,19 @@
 //! Expands `#[hegel::test]` into a plain `#[test]` with the `tc` parameter
 //! dropped, which is enough to reproduce the macro-expansion chain the lint
 //! inspects.
+//!
+//! # Constraint on fixtures
+//!
+//! This parses the item as a string, not as tokens: it finds the name after
+//! the first `"fn "` and the body between the first `{` and the last `}`. So a
+//! fixture must not place a doc comment, attribute, or anything else
+//! containing `fn `, `{` or `}` **above** the annotated function — the match
+//! point shifts into that text and the extraction is corrupted.
+//!
+//! In every case tried the corruption yields unparseable Rust and panics at
+//! expansion time, which is ugly but safe. Do not rely on that: keep fixtures
+//! plain, and if one needs commentary, put it below the function or in the
+//! `.stderr`.
 
 use proc_macro::TokenStream;
 

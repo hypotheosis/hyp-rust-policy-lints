@@ -13,6 +13,9 @@ impl TestCase {
 pub struct Hegel;
 
 impl Hegel {
+    // Mirrors the real crate's builder entry point, which returns a runner
+    // rather than `Self`. Task 9 gates CI on `clippy -D warnings`.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<F: Fn(&TestCase)>(f: F) -> Runner<F> {
         Runner(f)
     }
