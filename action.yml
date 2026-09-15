@@ -35,6 +35,31 @@ inputs:
 runs:
   using: composite
   steps:
+    # `github.action_ref` is the ref this action was called at -- the one thing
+    # that says which lint library version a run will use. It is only that
+    # while one of *this* action's own steps is running: inside a nested
+    # `uses:`, the github context belongs to the nested action, so
+    # `${{ github.action_ref }}` written directly in a cache step below
+    # evaluates to actions/cache's own ref. That is not a theory -- the first
+    # run of this action cached under `...-6.0.4-v4`, which is actions/cache@v4
+    # talking about itself, and would have pinned every consumer, at every
+    # version, to one shared cache entry.
+    #
+    # So capture it once here, in a step that belongs to this action, and pass
+    # it on as an output.
+    - name: Resolve the lint library version
+      id: ref
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+        CALLER_SHA: ${{ github.sha }}
+      run: |
+        echo "github.action_ref=[${ACTION_REF}]"
+        echo "ref=${ACTION_REF}" >> "$GITHUB_OUTPUT"
+        # Empty for a local-path `uses: ./`, where there is no released ref and
+        # the calling commit is what changes when the library changes.
+        echo "cache-key=${ACTION_REF:-local-${CALLER_SHA}}" >> "$GITHUB_OUTPUT"
+
     # Three caches, matching the three things a run has to produce: the crates
     # it downloads, the two binaries it installs, and the lint library it
     # compiles. They are deliberately separate -- each has a different natural
@@ -88,17 +113,15 @@ runs:
     # so the second path is scoped to the workspace being checked rather than
     # dragging in the consumer's own build artifacts.
     #
-    # Keyed on the action's ref, because that -- not anything in the consumer's
-    # tree -- is what selects the lint library version. github.action_ref is
-    # empty for a local-path `uses:`, so fall back to the calling commit, which
-    # is the thing that changes when the library changes in that mode.
+    # Keyed on the ref captured above, because that -- not anything in the
+    # consumer's tree -- is what selects the lint library version.
     - name: Cache lint library build
       uses: actions/cache@v4
       with:
         path: |
           ~/.dylint_drivers
           ${{ inputs.working-directory }}/target/dylint
-        key: hyp-policy-lints-lib-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}-${{ github.action_ref || github.sha }}
+        key: hyp-policy-lints-lib-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}-${{ steps.ref.outputs.cache-key }}
         restore-keys: hyp-policy-lints-lib-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}-
 
     # Inputs reach the shell through `env` rather than being interpolated into
@@ -123,7 +146,7 @@ runs:
       shell: bash
       env:
         MANIFEST: ${{ inputs.working-directory }}/Cargo.toml
-        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REF: ${{ steps.ref.outputs.ref }}
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/verify-pin.sh" "$MANIFEST" "$ACTION_REF"'
 
