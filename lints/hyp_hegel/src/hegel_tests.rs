@@ -2,8 +2,8 @@ use crate::hegel_detect::{body_calls_hegel, expansion_chain_includes_hegel};
 use crate::test_fns::find_test_fns;
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_data_structures::fx::FxHashSet;
-use rustc_hir::def_id::DefId;
 use rustc_hir::Item;
+use rustc_hir::def_id::DefId;
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint::Level;
@@ -91,15 +91,59 @@ declare_lint! {
     report_in_external_macro
 }
 
+declare_lint! {
+    /// ### What it does
+    ///
+    /// Checks for crates that have a test harness but contain no hegel
+    /// property tests at all.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// A crate that has opted into testing but uses no property testing is
+    /// missing the primary constraint this policy exists to enforce. A crate
+    /// with no tests at all is a separate concern and is not reported here.
+    ///
+    /// ### Example
+    ///
+    /// ```rust,ignore
+    /// #[test]
+    /// fn one() {}
+    /// #[test]
+    /// fn two() {}
+    /// ```
+    ///
+    /// Use instead:
+    ///
+    /// ```rust,ignore
+    /// #[hegel::test]
+    /// fn property(tc: hegel::TestCase) {}
+    /// ```
+    pub CRATE_WITHOUT_HEGEL_TESTS,
+    Deny,
+    "crate has tests but no hegel property tests"
+    // Deliberately *not* `report_in_external_macro`, unlike the two lints
+    // above. Their spans are a test function or an `allow` attribute, either
+    // of which a macro can generate; this lint's span is the first character
+    // of the crate root file, whose `SyntaxContext` is the root context by
+    // construction, so the flag could never change whether the diagnostic
+    // survives. Verified: the lint fires without it. If the span is ever
+    // moved off the crate root — onto an offending test, say — add the flag.
+}
+
 #[derive(Default)]
 pub struct HegelTests {
     test_fns: FxHashSet<DefId>,
-    /// Tests that were recognised as hegel tests. Consumed by the crate-level
-    /// lint added in a later task.
+    /// Tests recognised as hegel tests, counted as `check_item` visits them.
+    /// Read by `check_crate_post` to decide whether `CRATE_WITHOUT_HEGEL_TESTS`
+    /// fires.
     hegel_test_count: usize,
 }
 
-impl_lint_pass!(HegelTests => [NON_HEGEL_TEST, HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION]);
+impl_lint_pass!(HegelTests => [
+    NON_HEGEL_TEST,
+    HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
+    CRATE_WITHOUT_HEGEL_TESTS
+]);
 
 impl<'tcx> LateLintPass<'tcx> for HegelTests {
     /// Collect the crate's test functions. Nothing is reported from here.
@@ -109,6 +153,14 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
     /// refers to it, so the collection genuinely needs a whole-crate pass. The
     /// reporting deliberately does not: see `check_item`.
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
+        // Reset before collecting, so the pass is idempotent if rustc ever
+        // reuses one instance across crates. `test_fns` is overwritten
+        // wholesale below, but `hegel_test_count` only ever increments, and a
+        // stale non-zero count would silently suppress
+        // `CRATE_WITHOUT_HEGEL_TESTS` on the next crate — a false negative
+        // with no symptom. One line here is cheaper than depending on rustc's
+        // instantiation policy staying as it is.
+        self.hegel_test_count = 0;
         self.test_fns = find_test_fns(cx);
     }
 
@@ -148,7 +200,9 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
         // is public and destructures directly. Verified against this
         // nightly's `rustc_middle::lint` in the Task 2 spike; do not
         // substitute `lint_level_at_node`, which does not exist here.
-        let spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, item.hir_id());
+        let spec = cx
+            .tcx
+            .lint_level_spec_at_node(NON_HEGEL_TEST, item.hir_id());
 
         match (spec.level(), spec.src) {
             // Exempted in source with a stated reason: accepted.
@@ -161,14 +215,24 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
             // are excluded because they are the one degenerate form that is
             // mechanically detectable, and `reason = ""` plainly satisfies the
             // letter of the policy while defeating its entire purpose.
-            (Level::Allow, LintLevelSource::Node { reason: Some(reason), .. })
-                if !reason.as_str().trim().is_empty() => {}
+            (
+                Level::Allow,
+                LintLevelSource::Node {
+                    reason: Some(reason),
+                    ..
+                },
+            ) if !reason.as_str().trim().is_empty() => {}
 
             // Exempted in source with no reason, or an empty one: report the
             // attribute.
             // `span` covers just the lint name inside the attribute, not
             // the whole `#[allow(...)]`.
-            (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {
+            (
+                Level::Allow,
+                LintLevelSource::Node {
+                    span: attr_span, ..
+                },
+            ) => {
                 span_lint_and_help(
                     cx,
                     HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
@@ -197,5 +261,30 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
                 );
             }
         }
+    }
+
+    /// Report a crate that runs tests but none of them are hegel tests.
+    ///
+    /// Runs once, after every item has been visited, so `hegel_test_count` is
+    /// final by the time it is read.
+    fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
+        // A crate with no test harness at all stays silent: "this crate has no
+        // tests" is a different policy question and deliberately out of scope
+        // here. Only a crate that has opted into testing and then used no
+        // property testing is reported.
+        if self.test_fns.is_empty() || self.hegel_test_count > 0 {
+            return;
+        }
+
+        let crate_span = cx.tcx.def_span(rustc_hir::def_id::CRATE_DEF_ID);
+        let span = cx.tcx.sess.source_map().start_point(crate_span);
+        span_lint_and_help(
+            cx,
+            CRATE_WITHOUT_HEGEL_TESTS,
+            span,
+            "crate has tests but no hegel property tests",
+            None,
+            "add at least one `#[hegel::test]` property test to this crate",
+        );
     }
 }

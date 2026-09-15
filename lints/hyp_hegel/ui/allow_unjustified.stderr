@@ -7,5 +7,14 @@ LL | #[allow(non_hegel_test)]
    = help: add `reason = "..."` explaining why a property test does not apply here
    = note: `#[deny(hegel_exemption_without_justification)]` on by default
 
-error: aborting due to 1 previous error
+error: crate has tests but no hegel property tests
+  --> $DIR/allow_unjustified.rs:1:1
+   |
+LL | #[allow(non_hegel_test)]
+   | ^
+   |
+   = help: add at least one `#[hegel::test]` property test to this crate
+   = note: `#[deny(crate_without_hegel_tests)]` on by default
+
+error: aborting due to 2 previous errors
 

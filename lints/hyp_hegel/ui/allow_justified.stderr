@@ -1,0 +1,11 @@
+error: crate has tests but no hegel property tests
+  --> $DIR/allow_justified.rs:1:1
+   |
+LL | #[allow(non_hegel_test, reason = "asserts an exact serialized byte layout; no general property holds")]
+   | ^
+   |
+   = help: add at least one `#[hegel::test]` property test to this crate
+   = note: `#[deny(crate_without_hegel_tests)]` on by default
+
+error: aborting due to 1 previous error
+

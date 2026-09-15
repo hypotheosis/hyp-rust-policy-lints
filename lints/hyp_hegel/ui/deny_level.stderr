@@ -11,5 +11,14 @@ note: the lint level is defined here
 LL |     #[deny(non_hegel_test)]
    |            ^^^^^^^^^^^^^^
 
-error: aborting due to 1 previous error
+error: crate has tests but no hegel property tests
+  --> $DIR/deny_level.rs:1:1
+   |
+LL | mod legacy {
+   | ^
+   |
+   = help: add at least one `#[hegel::test]` property test to this crate
+   = note: `#[deny(crate_without_hegel_tests)]` on by default
+
+error: aborting due to 2 previous errors
 
