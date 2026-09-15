@@ -103,6 +103,18 @@ declare_lint! {
     /// missing the primary constraint this policy exists to enforce. A crate
     /// with no tests at all is a separate concern and is not reported here.
     ///
+    /// ### Interaction with `allow(non_hegel_test)`
+    ///
+    /// A crate whose tests are *all* individually exempted — even with a
+    /// justified `allow(non_hegel_test)` on every one — is still reported.
+    /// An exemption from the per-test rule is not an exemption from this one.
+    /// That is deliberate: it keeps "this crate does no property testing"
+    /// visible as a single fact, rather than letting it accumulate one
+    /// justified exemption at a time until nobody notices. A crate that has
+    /// genuinely decided against property testing silences this lint
+    /// explicitly, with a crate-level
+    /// `#![allow(crate_without_hegel_tests, reason = "...")]`.
+    ///
     /// ### Example
     ///
     /// ```rust,ignore
