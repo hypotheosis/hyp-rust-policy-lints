@@ -1,0 +1,9 @@
+[package]
+name = "hegeltest-macros"
+version = "0.14.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "hegel_macros"
+proc-macro = true

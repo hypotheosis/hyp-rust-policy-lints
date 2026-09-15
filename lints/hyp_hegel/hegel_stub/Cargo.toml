@@ -1,0 +1,11 @@
+[package]
+name = "hegeltest"
+version = "0.14.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "hegel"
+
+[dependencies]
+hegeltest-macros = { path = "../hegel_stub_macros" }

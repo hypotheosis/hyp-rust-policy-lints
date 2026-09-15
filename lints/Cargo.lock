@@ -424,6 +424,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
+name = "hegeltest"
+version = "0.14.0"
+dependencies = [
+ "hegeltest-macros",
+]
+
+[[package]]
+name = "hegeltest-macros"
+version = "0.14.0"
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -445,6 +456,7 @@ dependencies = [
  "clippy_utils",
  "dylint_linting",
  "dylint_testing",
+ "hegeltest",
 ]
 
 [[package]]

@@ -7,7 +7,9 @@ dylint_linting::dylint_library!();
 extern crate rustc_hir;
 extern crate rustc_lint;
 extern crate rustc_session;
+extern crate rustc_span;
 
+mod hegel_detect;
 mod hegel_tests;
 mod test_fns;
 
