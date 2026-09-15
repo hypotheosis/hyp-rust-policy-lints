@@ -2,6 +2,7 @@ use crate::hegel_detect::{body_calls_hegel, expansion_chain_includes_hegel};
 use crate::test_fns::find_test_fns;
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def_id::DefId;
+use rustc_hir::Item;
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint::Level;
@@ -100,72 +101,88 @@ pub struct HegelTests {
 impl_lint_pass!(HegelTests => [NON_HEGEL_TEST, HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION]);
 
 impl<'tcx> LateLintPass<'tcx> for HegelTests {
+    /// Collect the crate's test functions. Nothing is reported from here.
+    ///
+    /// Recovering a `#[test]` function requires scanning every free item in
+    /// the crate for the harness-generated `TestDescAndFn` constant that
+    /// refers to it, so the collection genuinely needs a whole-crate pass. The
+    /// reporting deliberately does not: see `check_item`.
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
         self.test_fns = find_test_fns(cx);
+    }
 
-        for &def_id in &self.test_fns {
-            let span = cx.tcx.def_span(def_id);
-            // `#[hegel::test]` shows up in the expansion chain; the builder
-            // form is a plain `#[test]` and only shows up in the body.
-            let is_hegel = expansion_chain_includes_hegel(cx, span)
-                || def_id
-                    .as_local()
-                    .is_some_and(|local| body_calls_hegel(cx, local));
-            if is_hegel {
-                self.hegel_test_count += 1;
-                continue;
+    /// Report on a test function while it is the item being visited.
+    ///
+    /// Diagnostics are emitted here rather than from `check_crate` because
+    /// `LateContext` resolves a lint's level against
+    /// `last_node_with_lint_attrs`, which is only the item's own `HirId` while
+    /// that item is being visited. During `check_crate` it is still
+    /// `CRATE_HIR_ID`, so every `#[warn]`, `#[deny]`, `#[expect]` and
+    /// `#[allow]` written on a test or its enclosing module was silently
+    /// ignored and the lint always fired at its declared default level.
+    fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
+        let def_id = item.owner_id.to_def_id();
+        if !self.test_fns.contains(&def_id) {
+            return;
+        }
+
+        let span = cx.tcx.def_span(def_id);
+        // `#[hegel::test]` shows up in the expansion chain; the builder
+        // form is a plain `#[test]` and only shows up in the body.
+        let is_hegel = expansion_chain_includes_hegel(cx, span)
+            || def_id
+                .as_local()
+                .is_some_and(|local| body_calls_hegel(cx, local));
+        if is_hegel {
+            self.hegel_test_count += 1;
+            return;
+        }
+
+        // An `allow` suppresses `non_hegel_test` by construction, so the
+        // justified and unjustified cases are indistinguishable from the
+        // emission path alone — the level has to be inspected directly.
+        //
+        // `lint_level_spec_at_node` returns `StableLevelSpec`, whose `level`
+        // field is deliberately private — read it through `.level()`. `src`
+        // is public and destructures directly. Verified against this
+        // nightly's `rustc_middle::lint` in the Task 2 spike; do not
+        // substitute `lint_level_at_node`, which does not exist here.
+        let spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, item.hir_id());
+
+        match (spec.level(), spec.src) {
+            // Exempted in source with a stated reason: accepted.
+            (Level::Allow, LintLevelSource::Node { reason: Some(_), .. }) => {}
+
+            // Exempted in source with no reason: report the attribute.
+            // `span` covers just the lint name inside the attribute, not
+            // the whole `#[allow(...)]`.
+            (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {
+                span_lint_and_help(
+                    cx,
+                    HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
+                    attr_span,
+                    "`allow(non_hegel_test)` without a stated reason",
+                    None,
+                    "add `reason = \"...\"` explaining why a property test does not apply here",
+                );
             }
 
-            let Some(local) = def_id.as_local() else {
-                continue;
-            };
-            let hir_id = cx.tcx.local_def_id_to_hir_id(local);
-            // This pass emits from `check_crate`, so the enclosing node rustc
-            // would otherwise resolve the level against is the crate root — a
-            // per-test `#[allow(non_hegel_test)]` would be ignored entirely.
-            // The level therefore has to be queried explicitly at the test's
-            // own `HirId`, which also walks up to any enclosing `mod` or the
-            // crate root.
-            //
-            // `lint_level_spec_at_node` returns `StableLevelSpec`, whose `level`
-            // field is deliberately private — read it through `.level()`. `src`
-            // is public and destructures directly. Verified against this
-            // nightly's `rustc_middle::lint` in the Task 2 spike; do not
-            // substitute `lint_level_at_node`, which does not exist here.
-            let spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, hir_id);
+            // Allowed from the command line (`-A non_hegel_test`): a
+            // deliberate operator decision, not a source-level exemption.
+            (Level::Allow, _) => {}
 
-            match (spec.level(), spec.src) {
-                // Exempted in source with a stated reason: accepted.
-                (Level::Allow, LintLevelSource::Node { reason: Some(_), .. }) => {}
-
-                // Exempted in source with no reason: report the attribute.
-                // `span` covers just the lint name inside the attribute, not
-                // the whole `#[allow(...)]`.
-                (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {
-                    span_lint_and_help(
-                        cx,
-                        HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
-                        attr_span,
-                        "`allow(non_hegel_test)` without a stated reason",
-                        None,
-                        "add `reason = \"...\"` explaining why a property test does not apply here",
-                    );
-                }
-
-                // Allowed from the command line (`-A non_hegel_test`): a
-                // deliberate operator decision, not a source-level exemption.
-                (Level::Allow, _) => {}
-
-                _ => {
-                    span_lint_and_help(
-                        cx,
-                        NON_HEGEL_TEST,
-                        span,
-                        "test does not use the hegel property-testing framework",
-                        None,
-                        "rewrite this as a property test using `#[hegel::test]`",
-                    );
-                }
+            // Every other level — the `Deny` default, or an explicit
+            // `#[warn]` / `#[deny]` / `#[expect]` — is left to rustc, which
+            // now resolves it against this item.
+            _ => {
+                span_lint_and_help(
+                    cx,
+                    NON_HEGEL_TEST,
+                    span,
+                    "test does not use the hegel property-testing framework",
+                    None,
+                    "rewrite this as a property test using `#[hegel::test]`",
+                );
             }
         }
     }

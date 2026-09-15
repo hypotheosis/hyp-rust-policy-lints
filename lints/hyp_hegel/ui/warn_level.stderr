@@ -1,0 +1,15 @@
+warning: test does not use the hegel property-testing framework
+  --> $DIR/warn_level.rs:3:1
+   |
+LL | fn downgraded_to_warning() {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: rewrite this as a property test using `#[hegel::test]`
+note: the lint level is defined here
+  --> $DIR/warn_level.rs:1:8
+   |
+LL | #[warn(non_hegel_test)]
+   |        ^^^^^^^^^^^^^^
+
+warning: 1 warning emitted
+
