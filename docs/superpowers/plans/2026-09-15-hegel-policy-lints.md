@@ -28,7 +28,19 @@ You are almost certainly unfamiliar with dylint. Read this section; it will save
 
 **The `--all-targets` trap.** The lint can only see tests when the test harness is compiled. Every `cargo dylint` invocation in this project must pass `-- --all-targets`. If you forget, the lint loads, finds zero tests, reports nothing, and looks like it passed.
 
-**Regenerating `.stderr` files.** Run the UI test with `BLESS=1` set to overwrite the expected output with the actual output. Always read the diff before blessing — blessing a wrong expectation is how these test suites rot.
+**Regenerating `.stderr` files.** There is no bless mode. `dylint_testing` 6.0.4 builds its `compiletest::Config` without ever setting `bless`, and `compiletest_rs` 0.11.2 hardcodes `bless: false` in its `Default` impl, so `BLESS=1` and every other env var are silently ignored.
+
+The real workflow is to let the failing run hand you the actual output:
+
+```bash
+cd lints && cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+# -> Actual stderr saved to /tmp/<fixture>.stage-id.stderr
+cp /tmp/<fixture>.stage-id.stderr hyp_hegel/ui/<fixture>.stderr
+```
+
+`compare_output` writes the same string to both the temp file and the diff, so the copied file is byte-identical to what a bless would have produced.
+
+**Always read the file before copying it into place.** Accepting output you have not looked at is how a suite ends up certifying a broken lint — which on this project is a live risk, not a platitude: an inverted `non_hegel_test` would produce a perfectly self-consistent set of `.stderr` files.
 
 ---
 
@@ -553,7 +565,10 @@ pub fn register_lints(_sess: &rustc_session::Session, lint_store: &mut rustc_lin
 - [ ] **Step 6: Bless and inspect the expected output**
 
 ```bash
-cd lints && BLESS=1 cargo test --package hyp_hegel --test ui
+cd lints
+# The run fails and prints where it saved the actual output; copy that into place.
+cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+cp /tmp/plain_test.stage-id.stderr hyp_hegel/ui/plain_test.stderr
 cat hyp_hegel/ui/plain_test.stderr
 ```
 
@@ -795,7 +810,13 @@ Add `mod hegel_detect;` to `lints/hyp_hegel/src/lib.rs` alongside the other modu
 - [ ] **Step 7: Run to verify it passes**
 
 ```bash
-cd lints && BLESS=1 cargo test --package hyp_hegel --test ui && cargo test --package hyp_hegel --test ui
+cd lints
+# Regenerate any .stderr that changed: the failing run prints "Actual stderr
+# saved to <path>" for each fixture; read each one, then copy it into
+# hyp_hegel/ui/. There is no bless mode -- see the Background section.
+cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+# ...copy each into place, then confirm the suite is green:
+cargo test --package hyp_hegel --test ui
 ```
 
 Expected: `hegel_test.stderr` is empty (or absent), `plain_test.stderr` unchanged, test PASSes. If `plain_test.stderr` changed, something regressed — investigate before committing.
@@ -948,7 +969,13 @@ and import `body_calls_hegel` alongside `expansion_chain_includes_hegel`.
 - [ ] **Step 6: Run to verify it passes**
 
 ```bash
-cd lints && BLESS=1 cargo test --package hyp_hegel --test ui && cargo test --package hyp_hegel --test ui
+cd lints
+# Regenerate any .stderr that changed: the failing run prints "Actual stderr
+# saved to <path>" for each fixture; read each one, then copy it into
+# hyp_hegel/ui/. There is no bless mode -- see the Background section.
+cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+# ...copy each into place, then confirm the suite is green:
+cargo test --package hyp_hegel --test ui
 ```
 
 Expected: PASS, with `builder_form.stderr` empty and `plain_test.stderr` unchanged. Confirm `plain_test` still fires — an over-broad body scan that matches everything would silently disable the whole lint.
@@ -1160,7 +1187,13 @@ In `lints/hyp_hegel/src/lib.rs`:
 - [ ] **Step 6: Run and bless**
 
 ```bash
-cd lints && BLESS=1 cargo test --package hyp_hegel --test ui && cargo test --package hyp_hegel --test ui
+cd lints
+# Regenerate any .stderr that changed: the failing run prints "Actual stderr
+# saved to <path>" for each fixture; read each one, then copy it into
+# hyp_hegel/ui/. There is no bless mode -- see the Background section.
+cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+# ...copy each into place, then confirm the suite is green:
+cargo test --package hyp_hegel --test ui
 ```
 
 Expected: PASS. `allow_unjustified.stderr` contains one `hegel_exemption_without_justification` error pointing at the `#[allow]` attribute; `allow_justified.stderr` is empty. Verify both by reading them.
@@ -1276,7 +1309,13 @@ In `lints/hyp_hegel/src/lib.rs`, add `hegel_tests::CRATE_WITHOUT_HEGEL_TESTS` to
 - [ ] **Step 6: Run and bless**
 
 ```bash
-cd lints && BLESS=1 cargo test --package hyp_hegel --test ui && cargo test --package hyp_hegel --test ui
+cd lints
+# Regenerate any .stderr that changed: the failing run prints "Actual stderr
+# saved to <path>" for each fixture; read each one, then copy it into
+# hyp_hegel/ui/. There is no bless mode -- see the Background section.
+cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
+# ...copy each into place, then confirm the suite is green:
+cargo test --package hyp_hegel --test ui
 ```
 
 Expected: PASS. `no_hegel_tests.stderr` contains `crate_without_hegel_tests`. Critically, check that `hegel_test.stderr` and `builder_form.stderr` are still empty — those crates *do* have hegel tests and must not trip the crate-level check. If they now fire, `hegel_test_count` is not being incremented on the skip path (Task 6, Step 4).
@@ -2029,8 +2068,11 @@ cd lints && cargo test          # UI tests
 ./scripts/e2e.sh                # end-to-end consumer check
 ```
 
-Regenerate expected UI output with `BLESS=1 cargo test`, and always read the
-diff before accepting it.
+To regenerate expected UI output: run the test, and it prints `Actual stderr
+saved to <path>` for each fixture that differs. Read that file, then copy it
+over the corresponding `hyp_hegel/ui/*.stderr`. There is no bless mode —
+`dylint_testing` does not plumb one through to `compiletest_rs`. Always read
+the output before accepting it.
 
 Adding a lint: create a new directory under `lints/`. The workspace
 `members = ["*"]` glob and the consumer-side `pattern = "lints/*"` both pick it
