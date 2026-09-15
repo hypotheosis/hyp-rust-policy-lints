@@ -1,0 +1,137 @@
+name: Hyp Rust Policy Lints
+description: Run the hypotheosis Rust policy lints over a Cargo workspace with cargo-dylint.
+author: hypotheosis
+
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  working-directory:
+    description: Workspace root to check, relative to the repository checkout.
+    required: false
+    default: "."
+  args:
+    description: >-
+      Arguments passed to `cargo dylint`. Everything after `--` goes to the
+      underlying `cargo check`. Keep `--all-targets`: without it no test
+      harness is compiled, so the lints see no tests, find nothing, and the
+      run passes while checking nothing at all.
+    required: false
+    default: "--all -- --all-targets"
+  cargo-dylint-version:
+    description: Version of cargo-dylint and dylint-link to install.
+    required: false
+    default: "6.0.4"
+  verify-pin:
+    description: >-
+      Fail if the workspace pins a different lint-library tag than the ref this
+      action was called at. Set to "false" when the workspace pins the library
+      by `path`, or when the action runs from a local checkout (`uses: ./`),
+      since neither can be checked against a released ref.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Three caches, matching the three things a run has to produce: the crates
+    # it downloads, the two binaries it installs, and the lint library it
+    # compiles. They are deliberately separate -- each has a different natural
+    # key, and folding them into one entry would make every cargo-dylint bump
+    # re-download the registry, or every lockfile change rebuild the library.
+    #
+    # registry/src and git/checkouts are omitted on purpose: cargo re-extracts
+    # them from registry/cache and git/db, and caching them roughly doubles the
+    # entry for nothing.
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: hyp-policy-lints-cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Cargo.lock', inputs.working-directory)) }}
+        restore-keys: hyp-policy-lints-cargo-${{ runner.os }}-${{ runner.arch }}-
+
+    # `cargo install --root` keeps the binaries and cargo's install ledger
+    # (.crates.toml / .crates2.json) together in one directory, so the cache
+    # entry can only ever be self-consistent.
+    #
+    # Caching ~/.cargo/bin instead -- as the obvious version of this does -- is
+    # broken: the ledger lives in ~/.cargo, not ~/.cargo/bin, so a restored
+    # cache hands back the binary without the record of it, and the next
+    # `cargo install` aborts with
+    #     error: binary `dylint-link` already exists in destination
+    # on every single cache hit. That is every run after the first. A private
+    # root also leaves the runner image's own ~/.cargo/bin shims alone, which
+    # matters more here than in our CI: this runs in someone else's job.
+    #
+    # No restore-keys: a prefix hit would restore a root built for a different
+    # cargo-dylint version, and the point of the key is to get a cold, clean
+    # root when the pin moves.
+    - name: Cache dylint tools
+      uses: actions/cache@v4
+      with:
+        path: ~/.dylint-tools
+        key: hyp-policy-lints-tools-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}
+
+    # The expensive half of a cold run: a nightly rustc driver, plus the lint
+    # library itself compiled against rustc-dev. Minutes, not seconds.
+    #
+    # The driver lives in ~/.dylint_drivers -- verified against dylint 6.0.4's
+    # `driver_builder::dylint_drivers()`, which is `$HOME/.dylint_drivers`
+    # unless DYLINT_DRIVER_PATH overrides it. It is emphatically not
+    # ~/.local/share/dylint; caching that path caches an empty directory.
+    #
+    # The library lands in `<workspace target>/dylint/libraries/<toolchain>/`,
+    # so the second path is scoped to the workspace being checked rather than
+    # dragging in the consumer's own build artifacts.
+    #
+    # Keyed on the action's ref, because that -- not anything in the consumer's
+    # tree -- is what selects the lint library version. github.action_ref is
+    # empty for a local-path `uses:`, so fall back to the calling commit, which
+    # is the thing that changes when the library changes in that mode.
+    - name: Cache lint library build
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.dylint_drivers
+          ${{ inputs.working-directory }}/target/dylint
+        key: hyp-policy-lints-lib-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}-${{ github.action_ref || github.sha }}
+        restore-keys: hyp-policy-lints-lib-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cargo-dylint-version }}-
+
+    # Inputs reach the shell through `env` rather than being interpolated into
+    # the command text: this action runs in other people's workflows, and an
+    # input spliced straight into a `run:` block is a script-injection seam.
+    - name: Install cargo-dylint
+      shell: bash
+      env:
+        DYLINT_VERSION: ${{ inputs.cargo-dylint-version }}
+      run: |
+        cargo install --locked --root "$HOME/.dylint-tools" \
+          "cargo-dylint@${DYLINT_VERSION}" "dylint-link@${DYLINT_VERSION}"
+
+    # cargo discovers the `dylint` subcommand by finding cargo-dylint on PATH,
+    # and the lint library links through dylint-link.
+    - name: Put dylint on PATH
+      shell: bash
+      run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
+
+    - name: Verify pinned version
+      if: inputs.verify-pin == 'true'
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.working-directory }}/Cargo.toml
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/verify-pin.sh" "$MANIFEST" "$ACTION_REF"'
+
+    # $ARGS is unquoted on purpose: `args` is a command line, and it has to
+    # word-split into flags. Quoting it would hand cargo one long argument.
+    - name: Run policy lints
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ARGS: ${{ inputs.args }}
+      run: cargo dylint $ARGS

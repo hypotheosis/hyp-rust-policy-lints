@@ -190,3 +190,105 @@ jobs:
       # relative to its own path.
       - name: End-to-end assertions
         run: ./scripts/e2e.sh
+
+  # The consumer-facing entry point: the composite action at the repository
+  # root, run the way a consumer runs it.
+  #
+  # An action that has never executed is not finished, and nothing else in this
+  # pipeline touches action.yml -- the e2e job calls cargo dylint directly, so
+  # it would stay green through any breakage in the action's inputs, caching,
+  # install or PATH wiring.
+  #
+  # It runs against fixtures/action_check rather than fixtures/consumer, and
+  # expects to *pass*. fixtures/consumer is built to fail: asserting failure
+  # there would mean the job could not distinguish a policy violation from the
+  # action being broken -- a mistyped input, a failed install and a real finding
+  # all surface as a non-zero exit -- and it would report success long after the
+  # action stopped working. Against a workspace that should genuinely pass, any
+  # breakage is red.
+  action:
+    name: Composite action
+    runs-on: ubuntu-latest
+    needs: lints
+    timeout-minutes: 45
+    steps:
+      # `uses: ./` resolves action.yml out of the workspace, so the checkout
+      # has to come first.
+      - uses: actions/checkout@v5
+
+      # Both directions. A pin check that cannot fail is worse than none: it
+      # reports the same green tick whether or not it verified anything, which
+      # is the exact failure mode it exists to catch elsewhere.
+      - name: Pin verification rejects drift
+        run: |
+          tmp=$(mktemp -d)
+          cat > "$tmp/Cargo.toml" <<'EOF'
+          [workspace.metadata.dylint]
+          libraries = [
+            { git = "https://github.com/hypotheosis/hyp-rust-policy-lints", tag = "v0.1.0", pattern = "lints/*" },
+          ]
+          EOF
+
+          ./scripts/verify-pin.sh "$tmp/Cargo.toml" v0.1.0
+
+          if ./scripts/verify-pin.sh "$tmp/Cargo.toml" v0.2.0; then
+            echo "FAIL: verify-pin.sh accepted a tag that does not match the ref"
+            exit 1
+          fi
+
+          # An empty github.action_ref -- what a local-path `uses:` produces --
+          # must fail rather than pass unverified.
+          if ./scripts/verify-pin.sh "$tmp/Cargo.toml" ""; then
+            echo "FAIL: verify-pin.sh passed with no action ref to check against"
+            exit 1
+          fi
+
+          echo "ok: verify-pin.sh rejects drift and an unknown action ref"
+
+      # The action ships its own cargo-dylint pin, and this workflow ships
+      # another. Nothing forces them to agree, and a repository that tested one
+      # version and shipped another would be testing the wrong thing.
+      - name: Action pins the same cargo-dylint as CI
+        run: |
+          default=$(python3 -c \
+            "import yaml; print(yaml.safe_load(open('action.yml'))['inputs']['cargo-dylint-version']['default'])")
+          if [ "$default" != "$DYLINT_VERSION" ]; then
+            echo "FAIL: action.yml defaults to cargo-dylint $default, CI pins $DYLINT_VERSION"
+            exit 1
+          fi
+          echo "ok: both pin cargo-dylint $default"
+
+      # Everything except working-directory is left at its default, because the
+      # defaults are what consumers get -- `--all -- --all-targets` included.
+      #
+      # verify-pin is off for two independent reasons, either of which alone
+      # would be enough: fixtures/action_check pins the library by `path`, which
+      # has no tag to compare against, and `uses: ./` leaves github.action_ref
+      # empty, so there is no action version to compare it *to*. Turning it off
+      # here also exercises the input.
+      - name: Run the action
+        uses: ./
+        with:
+          working-directory: fixtures/action_check
+          verify-pin: "false"
+
+      # The step above exits 0 both when the lints ran and found nothing and
+      # when no library loaded at all: `cargo dylint` degrades to a plain
+      # `cargo check` when it finds no libraries, warning on stderr and exiting
+      # clean. Without this, an action that silently stopped loading the library
+      # would still be green. cargo-dylint is on PATH because the action put it
+      # there, so this doubles as a check that the PATH export works.
+      - name: Assert the lint library actually loaded
+        working-directory: fixtures/action_check
+        run: |
+          list=$(cargo dylint list --all 2>/dev/null)
+          echo "$list"
+          for lint in non_hegel_test hegel_exemption_without_justification crate_without_hegel_tests; do
+            if ! grep -qE "^[[:space:]]+${lint}([[:space:]]|$)" <<<"$list"; then
+              echo "FAIL: 'cargo dylint list --all' did not report $lint"
+              echo "  The action's run passed vacuously: no lint library was loaded."
+              cargo dylint list --all 2>&1
+              exit 1
+            fi
+          done
+          echo "ok: lint library loaded"

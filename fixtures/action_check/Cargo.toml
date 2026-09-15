@@ -1,0 +1,35 @@
+# A deliberately *clean* consumer workspace, used by CI's `action` job and by
+# nothing else.
+#
+# fixtures/consumer is the wrong shape for that job: it exists to prove the
+# lints fire, so it contains packages that violate the policy and a run over it
+# is expected to fail. A job asserting "this step failed" cannot tell a policy
+# violation from the action being broken -- a missing input, a bad install
+# step and a real finding all come back as a non-zero exit -- so it would go on
+# reporting success long after the action stopped working.
+#
+# A workspace that should genuinely pass inverts that: any breakage in the
+# action turns the job red. The one hole left is that `cargo dylint` exits 0
+# both when the lints ran and found nothing and when no library loaded at all,
+# so the job asserts separately that the library really loaded.
+
+[workspace]
+members = ["clean"]
+resolver = "2"
+
+[workspace.dependencies]
+hegel = { package = "hegeltest", version = "0.14" }
+
+# `path` rather than `git`/`tag`, for the same reason as fixtures/consumer: at
+# pull-request time the release tag does not exist yet. That is also why the
+# `action` job passes `verify-pin: false` -- a path pin has no tag to compare
+# an action ref against.
+[workspace.metadata.dylint]
+libraries = [{ path = "../../lints/*" }]
+
+# Consumers need this too: `dylint_lib` is set only by the dylint driver, so
+# without it every `cfg_attr(dylint_lib = "hyp_hegel", ...)` exemption warns on
+# an ordinary `cargo build`.
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(dylint_lib, values(any()))"]
