@@ -3,6 +3,8 @@ use crate::test_fns::find_test_fns;
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def_id::DefId;
 use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::lint::LintLevelSource;
+use rustc_session::lint::Level;
 use rustc_session::{declare_lint, impl_lint_pass};
 
 declare_lint! {
@@ -49,12 +51,53 @@ declare_lint! {
     report_in_external_macro
 }
 
+declare_lint! {
+    /// ### What it does
+    ///
+    /// Checks for `allow(non_hegel_test)` that carries no `reason = "..."`.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// Silencing the property-testing requirement should be a deliberate,
+    /// explained decision. Requiring a written reason forces whoever adds the
+    /// exemption — human or agent — to articulate why a property test does not
+    /// apply, and leaves that argument in the code for the next reader.
+    ///
+    /// ### Example
+    ///
+    /// ```rust,ignore
+    /// #[allow(non_hegel_test)]
+    /// #[test]
+    /// fn golden_wire_format() {}
+    /// ```
+    ///
+    /// Use instead:
+    ///
+    /// ```rust,ignore
+    /// #[allow(non_hegel_test, reason = "asserts an exact byte layout; no general property holds")]
+    /// #[test]
+    /// fn golden_wire_format() {}
+    /// ```
+    pub HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
+    Deny,
+    "`allow(non_hegel_test)` without a stated reason",
+    // The span this lint reports is the `allow` attribute's lint-name span. A
+    // consumer can generate that attribute from a macro — a `#[test]`-emitting
+    // macro that also writes the exemption, say — and rustc would then cancel
+    // the diagnostic before it is ever rendered. Opting in here keeps the
+    // justification requirement enforceable wherever the exemption is written.
+    report_in_external_macro
+}
+
 #[derive(Default)]
 pub struct HegelTests {
     test_fns: Vec<DefId>,
+    /// Tests that were recognised as hegel tests. Consumed by the crate-level
+    /// lint added in a later task.
+    hegel_test_count: usize,
 }
 
-impl_lint_pass!(HegelTests => [NON_HEGEL_TEST]);
+impl_lint_pass!(HegelTests => [NON_HEGEL_TEST, HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION]);
 
 impl<'tcx> LateLintPass<'tcx> for HegelTests {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
@@ -69,16 +112,61 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
                     .as_local()
                     .is_some_and(|local| body_calls_hegel(cx, local));
             if is_hegel {
+                self.hegel_test_count += 1;
                 continue;
             }
-            span_lint_and_help(
-                cx,
-                NON_HEGEL_TEST,
-                span,
-                "test does not use the hegel property-testing framework",
-                None,
-                "rewrite this as a property test using `#[hegel::test]`",
-            );
+
+            let Some(local) = def_id.as_local() else {
+                continue;
+            };
+            let hir_id = cx.tcx.local_def_id_to_hir_id(local);
+            // This pass emits from `check_crate`, so the enclosing node rustc
+            // would otherwise resolve the level against is the crate root — a
+            // per-test `#[allow(non_hegel_test)]` would be ignored entirely.
+            // The level therefore has to be queried explicitly at the test's
+            // own `HirId`, which also walks up to any enclosing `mod` or the
+            // crate root.
+            //
+            // `lint_level_spec_at_node` returns `StableLevelSpec`, whose `level`
+            // field is deliberately private — read it through `.level()`. `src`
+            // is public and destructures directly. Verified against this
+            // nightly's `rustc_middle::lint` in the Task 2 spike; do not
+            // substitute `lint_level_at_node`, which does not exist here.
+            let spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, hir_id);
+
+            match (spec.level(), spec.src) {
+                // Exempted in source with a stated reason: accepted.
+                (Level::Allow, LintLevelSource::Node { reason: Some(_), .. }) => {}
+
+                // Exempted in source with no reason: report the attribute.
+                // `span` covers just the lint name inside the attribute, not
+                // the whole `#[allow(...)]`.
+                (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {
+                    span_lint_and_help(
+                        cx,
+                        HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
+                        attr_span,
+                        "`allow(non_hegel_test)` without a stated reason",
+                        None,
+                        "add `reason = \"...\"` explaining why a property test does not apply here",
+                    );
+                }
+
+                // Allowed from the command line (`-A non_hegel_test`): a
+                // deliberate operator decision, not a source-level exemption.
+                (Level::Allow, _) => {}
+
+                _ => {
+                    span_lint_and_help(
+                        cx,
+                        NON_HEGEL_TEST,
+                        span,
+                        "test does not use the hegel property-testing framework",
+                        None,
+                        "rewrite this as a property test using `#[hegel::test]`",
+                    );
+                }
+            }
         }
     }
 }
