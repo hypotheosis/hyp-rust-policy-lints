@@ -44,8 +44,8 @@ You are almost certainly unfamiliar with dylint. Read this section; it will save
 | `lints/hyp_hegel/src/hegel_tests.rs` | Lint declarations and the `LateLintPass` |
 | `lints/hyp_hegel/src/test_fns.rs` | Recovering test functions from `TestDescAndFn` |
 | `lints/hyp_hegel/src/hegel_detect.rs` | Expansion-chain walk + body-scan fallback |
-| `lints/hyp_hegel/hegel_stub/` | Facade stub crate named `hegeltest` (types + macro re-export) |
-| `lints/hyp_hegel/hegel_stub_macros/` | Proc-macro stub named `hegeltest_macros`, mirrors the real crate's facade split |
+| `lints/hyp_hegel/hegel_stub/` | Facade stub, package `hegeltest` with `[lib] name = "hegel"` |
+| `lints/hyp_hegel/hegel_stub_macros/` | Proc-macro stub, package `hegeltest-macros` with `[lib] name = "hegel_macros"` |
 | `lints/hyp_hegel/ui/*.rs` + `.stderr` | UI fixtures |
 | `fixtures/consumer/` | Stable-toolchain e2e workspace (`good`, `bad`, `exempt_ok`, `exempt_bad`) |
 | `scripts/e2e.sh` | Asserts expected pass/fail per fixture package |
@@ -193,6 +193,8 @@ Note: `lints/Cargo.lock` is committed deliberately — it is part of the reprodu
 ## Task 2: Spike — confirm the unstable APIs
 
 The spec's §8 lists three things that must be settled against the real compiler rather than guessed. This task answers all three and writes the answers down. **Do not skip it**; Tasks 3–7 all depend on the results.
+
+> **Already executed.** The findings are recorded in `docs/superpowers/notes/2026-09-15-api-spike.md`, and Tasks 4–8 below have been amended to match them. The probe code in this task is preserved as written for the record, and contains two APIs the spike proved wrong (`lint_level_at_node`, and package-name-based crate matching). Read the notes, not this task, for ground truth.
 
 **Files:**
 - Create: `lints/hyp_hegel/src/test_fns.rs`, `docs/superpowers/notes/2026-09-15-api-spike.md`
@@ -585,20 +587,27 @@ git commit -m "feat: flag tests that do not use hegel"
 
 UI fixtures must not depend on the network or on hegel's test server. The stub provides just enough for `#[hegel::test]` to expand.
 
-It is split into a proc-macro crate and a facade that re-exports it, because that is how crates shipping attribute macros alongside runtime types are almost always structured — and it is very likely how the real `hegeltest` is built. That split matters here: the expansion chain reports the crate that *defines* the macro, which may be `hegeltest_macros` rather than `hegeltest`. A single-crate stub would paper over exactly the discrepancy the Task 2 spike exists to find. Reconcile this against the spike notes before moving on.
+It is split into a proc-macro crate and a facade that re-exports it, mirroring how the real crate is built. The Task 2 spike established the facts this depends on:
+
+**`tcx.crate_name()` returns a crate's `[lib]` name, never its Cargo package name.** The real crates are published as packages `hegeltest` and `hegeltest-macros`, but declare `[lib] name = "hegel"` and `[lib] name = "hegel_macros"`. `hegel_macros` is the *only* name the expansion chain ever reports for `#[hegel::test]`, and a consumer cannot change it by renaming the dependency.
+
+The stubs therefore set `[lib] name` explicitly. A stub matching on package names would validate a crate name that never occurs in production, and the UI tests would happily confirm a lint that is inverted in the real world.
 
 `lints/hyp_hegel/hegel_stub_macros/Cargo.toml`:
 
 ```toml
 [package]
-name = "hegeltest_macros"
+name = "hegeltest-macros"
 version = "0.14.0"
 edition = "2021"
 publish = false
 
 [lib]
+name = "hegel_macros"
 proc-macro = true
 ```
+
+`[lib] name` is what the lint sees. Do not drop it.
 
 `lints/hyp_hegel/hegel_stub_macros/src/lib.rs`:
 
@@ -639,8 +648,11 @@ version = "0.14.0"
 edition = "2021"
 publish = false
 
+[lib]
+name = "hegel"
+
 [dependencies]
-hegeltest_macros = { path = "../hegel_stub_macros" }
+hegeltest-macros = { path = "../hegel_stub_macros" }
 ```
 
 `lints/hyp_hegel/hegel_stub/src/lib.rs`:
@@ -648,7 +660,7 @@ hegeltest_macros = { path = "../hegel_stub_macros" }
 ```rust
 //! Minimal stand-in for the real `hegeltest` crate, used only by UI fixtures.
 
-pub use hegeltest_macros::test;
+pub use hegel_macros::test;
 
 pub struct TestCase;
 
@@ -683,15 +695,13 @@ In `lints/hyp_hegel/Cargo.toml`, under `[dev-dependencies]`:
 hegeltest = { path = "hegel_stub" }
 ```
 
-No rename here. The extern name must be `hegeltest` so fixtures can alias it themselves with `use hegeltest as hegel;`, which is what reproduces the real consumer's `hegel = { package = "hegeltest" }` arrangement at the point where it matters.
+No rename is needed or possible. Cargo binds a dependency under its `[lib]` name, so this is already reachable as `hegel::` in fixtures. Writing `use hegeltest as hegel;` does **not** compile — `error[E0432]: unresolved import hegeltest`.
 
 - [ ] **Step 3: Write the failing UI fixture**
 
 `lints/hyp_hegel/ui/hegel_test.rs`:
 
 ```rust
-use hegeltest as hegel;
-
 #[hegel::test]
 fn addition_commutes(tc: hegel::TestCase) {
     let a: i64 = tc.draw();
@@ -701,9 +711,7 @@ fn addition_commutes(tc: hegel::TestCase) {
 fn main() {}
 ```
 
-The `use hegeltest as hegel;` alias mirrors what consumers write as
-`hegel = { package = "hegeltest" }` in `Cargo.toml`. Attribute-macro paths
-resolve through `use` aliases, so `#[hegel::test]` finds the stub.
+No `use` needed: the dev-dependency's `[lib] name` is already `hegel`.
 
 - [ ] **Step 4: Run to verify it fails**
 
@@ -723,12 +731,16 @@ use rustc_span::Span;
 
 /// Crate names that count as hegel.
 ///
-/// The crate is published as `hegeltest` and conventionally renamed to `hegel`
-/// on import, because its proc-macros hard-code the `hegel::` path. `crate_name`
-/// reports the real package name, but both are accepted so that a vendored or
-/// renamed copy still satisfies the policy. Confirm against the Task 2 spike
-/// notes before changing this list.
-const HEGEL_CRATE_NAMES: &[&str] = &["hegel", "hegeltest"];
+/// These are `[lib]` names, not Cargo package names: `tcx.crate_name` reports
+/// the former, and a consumer cannot change it by renaming the dependency. The
+/// packages are published as `hegeltest` and `hegeltest-macros`, but declare
+/// `[lib] name = "hegel"` and `[lib] name = "hegel_macros"`.
+///
+/// `hegel_macros` is the name the expansion chain reports for `#[hegel::test]`.
+/// `hegel` is what the builder form (Task 5) resolves to. Both are required:
+/// omitting `hegel_macros` inverts the lint, making it fire on every genuine
+/// hegel test.
+const HEGEL_CRATE_NAMES: &[&str] = &["hegel", "hegel_macros"];
 
 /// Does this span's macro-expansion chain pass through the hegel crate?
 ///
@@ -806,26 +818,19 @@ The documented builder form uses a plain `#[test]` and calls `Hegel::new(..).run
 - Create: `lints/hyp_hegel/ui/builder_form.rs`
 - Modify: `lints/hyp_hegel/src/hegel_detect.rs`, `lints/hyp_hegel/src/hegel_tests.rs`
 
-- [ ] **Step 1: Extend the crate-name list**
+- [ ] **Step 1: Confirm the crate-name list already covers the builder form**
 
-The facade stub built in Task 4 already exports `Hegel` and `TestCase`, so no new crate is needed. But the builder form resolves to whichever crate *defines* those items, and `#[hegel::test]` resolves to whichever crate defines the macro — which the Task 4 split makes two different crates.
+No change should be needed. The facade stub from Task 4 exports `Hegel` and `TestCase` from a crate whose `[lib] name` is `hegel`, which `HEGEL_CRATE_NAMES` already contains.
 
-Update `HEGEL_CRATE_NAMES` in `lints/hyp_hegel/src/hegel_detect.rs` to cover both, replacing the existing constant:
+Verify before writing any code:
 
-```rust
-/// Crate names that count as hegel.
-///
-/// The crate is published as `hegeltest` and conventionally renamed to `hegel`
-/// on import, because its proc-macros hard-code the `hegel::` path.
-/// `crate_name` reports the real package name, never the rename, so the
-/// published name must be listed explicitly.
-///
-/// `hegeltest_macros` is listed because attribute macros are conventionally
-/// defined in a separate proc-macro crate re-exported by the facade, and the
-/// expansion chain reports the *defining* crate. Confirm the exact names
-/// against the Task 2 spike notes and add any this list is missing.
-const HEGEL_CRATE_NAMES: &[&str] = &["hegel", "hegeltest", "hegeltest_macros"];
+```bash
+grep -n 'HEGEL_CRATE_NAMES' lints/hyp_hegel/src/hegel_detect.rs
 ```
+
+Expected: `const HEGEL_CRATE_NAMES: &[&str] = &["hegel", "hegel_macros"];`
+
+If it says anything else, stop and reconcile against `docs/superpowers/notes/2026-09-15-api-spike.md` — a wrong list here silently inverts the lint.
 
 - [ ] **Step 2: Write the failing UI fixture**
 
@@ -963,7 +968,7 @@ git commit -m "feat: recognise hegel builder form via body scan"
 `#[allow(non_hegel_test)]` suppresses `non_hegel_test` by definition, so the pass must query the lint level itself and report unjustified exemptions under a *separate* lint that the allow does not cover.
 
 **Files:**
-- Create: `lints/hyp_hegel/ui/allow_justified.rs`, `lints/hyp_hegel/ui/allow_unjustified.rs`
+- Create: `lints/hyp_hegel/ui/allow_justified.rs`, `lints/hyp_hegel/ui/allow_unjustified.rs`, `lints/hyp_hegel/ui/allow_module_level.rs`
 - Modify: `lints/hyp_hegel/src/hegel_tests.rs`, `lints/hyp_hegel/src/lib.rs`
 
 - [ ] **Step 1: Write the two failing UI fixtures**
@@ -991,6 +996,31 @@ fn unexplained() {
 
 fn main() {}
 ```
+
+`lints/hyp_hegel/ui/allow_module_level.rs`:
+
+```rust
+#[allow(non_hegel_test, reason = "whole module is example-based by design")]
+mod legacy {
+    #[test]
+    fn one() {
+        assert_eq!(1 + 1, 2);
+    }
+
+    #[test]
+    fn two() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+
+fn main() {}
+```
+
+The Task 2 spike observed that a lint level set on a module is inherited by
+every test inside it, with `LintLevelSource::Node.span` pointing at the module's
+attribute. This fixture pins that behaviour down: one justified `allow` on a
+module exempts every test in it, and is clean. That breadth is intentional, but
+it is worth having a test that fails loudly if it ever changes.
 
 Fixtures write a bare `#[allow(...)]` rather than the `cfg_attr(dylint_lib = ...)` form consumers use, because under `dylint_testing` the lint is always registered. Task 8's e2e fixture covers the `cfg_attr` form.
 
@@ -1066,16 +1096,20 @@ Replace the emission block in `check_crate` with:
                 continue;
             };
             let hir_id = cx.tcx.local_def_id_to_hir_id(local);
-            let level = cx.tcx.lint_level_at_node(NON_HEGEL_TEST, hir_id);
+            // `lint_level_spec_at_node` returns `StableLevelSpec`, whose `level`
+            // field is deliberately private — read it through `.level()`. `src`
+            // is public and destructures directly. Verified against this
+            // nightly's `rustc_middle::lint` in the Task 2 spike; do not
+            // substitute `lint_level_at_node`, which does not exist here.
+            let spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, hir_id);
 
-            // Adjust this destructuring to the shape recorded in the Task 2
-            // spike notes: older nightlies return `(Level, LintLevelSource)`,
-            // newer ones a `LevelAndSource { level, src, .. }` struct.
-            match (level.level, level.src) {
+            match (spec.level(), spec.src) {
                 // Exempted in source with a stated reason: accepted.
                 (Level::Allow, LintLevelSource::Node { reason: Some(_), .. }) => {}
 
                 // Exempted in source with no reason: report the attribute.
+                // `span` covers just the lint name inside the attribute, not
+                // the whole `#[allow(...)]`.
                 (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {
                     span_lint_and_help(
                         cx,
@@ -1108,8 +1142,8 @@ Replace the emission block in `check_crate` with:
 Add the field `hegel_test_count: usize` to `HegelTests` (it is used in Task 7) and the imports:
 
 ```rust
-use rustc_lint::Level;
 use rustc_middle::lint::LintLevelSource;
+use rustc_session::lint::Level;
 ```
 
 - [ ] **Step 5: Register the new lint**
@@ -1479,7 +1513,7 @@ ok: exempt_ok clean
 ok: exempt_bad reported hegel_exemption_without_justification
 ```
 
-If `good` fails, the real `hegeltest` crate's expansion chain reports a crate name not in `HEGEL_CRATE_NAMES` — check the Task 2 spike notes and add it.
+If `good` fails, the real crate's expansion chain is reporting a `[lib]` name not in `HEGEL_CRATE_NAMES`. The Task 2 spike observed `hegel_macros` for `#[hegel::test]`; check `docs/superpowers/notes/2026-09-15-api-spike.md` and reconcile rather than guessing.
 
 - [ ] **Step 5: Verify the `--all-targets` trap is real**
 

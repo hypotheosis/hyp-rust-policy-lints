@@ -271,12 +271,16 @@ A test counts as hegel-based if **either** condition holds:
    which has no hegel expansion at all and would otherwise be a false positive.
 
 Crate identification is by name, resolved through
-`cx.tcx.crate_name(def_id.krate)`. Note that the hegel crate is published as
-`hegeltest` and conventionally renamed on import
-(`hegel = { package = "hegeltest" }`), because its proc-macros hard-code the
-`hegel::` path. The lint matches on the crate name as the compiler sees it;
-**the implementation must verify empirically whether that resolves to `hegel`
-or `hegeltest`** and match both if necessary.
+`cx.tcx.crate_name(def_id.krate)`.
+
+**Resolved by the Task 2 spike.** `crate_name` returns a crate's `[lib]` name,
+never its Cargo package name, and a consumer cannot change it by renaming the
+dependency. The real crates are published as packages `hegeltest` and
+`hegeltest-macros` but declare `[lib] name = "hegel"` and
+`[lib] name = "hegel_macros"`. The expansion chain reports `hegel_macros` for
+`#[hegel::test]`; the builder form resolves to `hegel`. The matched set is
+therefore `["hegel", "hegel_macros"]`. Omitting `hegel_macros` inverts the
+lint, making it fire on every genuine hegel test.
 
 ### 3.3 Justification enforcement
 
@@ -285,8 +289,13 @@ pass cannot rely on emitting and being silenced. Instead, for every non-hegel
 test the pass explicitly queries the lint level before emitting:
 
 ```
-level = cx.tcx.lint_level_at_node(NON_HEGEL_TEST, hir_id)
+spec = cx.tcx.lint_level_spec_at_node(NON_HEGEL_TEST, hir_id)
 ```
+
+**Resolved by the Task 2 spike.** `lint_level_at_node` does not exist on this
+nightly. `lint_level_spec_at_node` returns `StableLevelSpec`, whose `level`
+field is deliberately private — read it via `.level()`. `src` is public and
+destructures as below.
 
 and branches on the result:
 
@@ -525,16 +534,29 @@ routine dependency update.
 
 ---
 
-## 8. Open implementation questions
+## 8. Open implementation questions — RESOLVED
 
-These are deliberately deferred to implementation, where they can be resolved
-empirically rather than guessed:
+All three were settled empirically by the Task 2 spike. Full evidence in
+`docs/superpowers/notes/2026-09-15-api-spike.md`.
 
-1. **Crate name resolution for hegel** (§3.2) — whether `cx.tcx.crate_name`
-   yields `hegel` or `hegeltest` given the conventional rename. Match both if
-   ambiguous.
-2. **`LintLevelSource::Node` field shape** (§3.3) on nightly-2026-07-09 — the
-   API is internal and version-sensitive; confirm the `reason` field before
-   building on it.
-3. **Body-scan fallback depth** (§3.2) — whether a direct call scan suffices or
-   the builder form needs deeper traversal to catch `Hegel::new` behind a helper.
+1. **Crate name resolution for hegel** (§3.2) — RESOLVED. `crate_name` yields
+   the `[lib]` name: `hegel` for the facade, `hegel_macros` for the attribute
+   macro. Neither package name (`hegeltest`, `hegeltest-macros`) is ever
+   reported. Match set: `["hegel", "hegel_macros"]`.
+2. **`LintLevelSource::Node` field shape** (§3.3) — RESOLVED. `reason:
+   Option<Symbol>` exists and is populated; observed both `Some(..)` and `None`.
+   The accessor is `lint_level_spec_at_node`, not `lint_level_at_node`, and
+   `LevelSpec::level` is private — use `.level()`. Import `LintLevelSource` from
+   `rustc_middle::lint` and `Level` from `rustc_session::lint`.
+3. **Body-scan fallback depth** (§3.2) — deferred to Task 5, where the builder
+   fixture decides it. A direct call scan is the starting point.
+
+Two further findings the spike surfaced, not anticipated here:
+
+- A lint level set on a module is inherited by every test inside it, so one
+  justified `allow` on `mod tests` exempts the whole module. This is intended
+  behaviour and is pinned by a UI fixture.
+- `LintLevelSource::Node.span` covers only the lint's name inside the
+  attribute, not the whole `#[allow(...)]`.
+- The real `hegeltest` 0.14.27 builds cleanly on nightly-2026-07-09, so the
+  spec's contingency for stubbing it out in the e2e fixture does not apply.
