@@ -1,6 +1,7 @@
 use crate::hegel_detect::{body_calls_hegel, expansion_chain_includes_hegel};
 use crate::test_fns::find_test_fns;
 use clippy_utils::diagnostics::span_lint_and_help;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_hir::Item;
 use rustc_lint::{LateContext, LateLintPass};
@@ -92,7 +93,7 @@ declare_lint! {
 
 #[derive(Default)]
 pub struct HegelTests {
-    test_fns: Vec<DefId>,
+    test_fns: FxHashSet<DefId>,
     /// Tests that were recognised as hegel tests. Consumed by the crate-level
     /// lint added in a later task.
     hegel_test_count: usize,
@@ -151,9 +152,20 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
 
         match (spec.level(), spec.src) {
             // Exempted in source with a stated reason: accepted.
-            (Level::Allow, LintLevelSource::Node { reason: Some(_), .. }) => {}
+            //
+            // Only the *presence* of a non-empty reason is checked, never its
+            // quality: `reason = "n/a"` passes. That boundary is deliberate —
+            // judging whether an explanation is a real justification is not
+            // something a lint can do, and pretending otherwise would mean
+            // failing builds over prose. The empty and whitespace-only cases
+            // are excluded because they are the one degenerate form that is
+            // mechanically detectable, and `reason = ""` plainly satisfies the
+            // letter of the policy while defeating its entire purpose.
+            (Level::Allow, LintLevelSource::Node { reason: Some(reason), .. })
+                if !reason.as_str().trim().is_empty() => {}
 
-            // Exempted in source with no reason: report the attribute.
+            // Exempted in source with no reason, or an empty one: report the
+            // attribute.
             // `span` covers just the lint name inside the attribute, not
             // the whole `#[allow(...)]`.
             (Level::Allow, LintLevelSource::Node { span: attr_span, .. }) => {

@@ -4,6 +4,7 @@
 #[cfg(not(feature = "rlib"))]
 dylint_linting::dylint_library!();
 
+extern crate rustc_data_structures;
 extern crate rustc_hir;
 extern crate rustc_lint;
 extern crate rustc_middle;

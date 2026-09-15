@@ -1,4 +1,5 @@
 use clippy_utils::res::MaybeResPath;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{Closure, ConstItemRhs, ExprKind, ItemKind, def_id::DefId};
 use rustc_lint::LateContext;
 
@@ -9,9 +10,12 @@ use rustc_lint::LateContext;
 /// whose `testfn` field holds `StaticTestFn(|| assert_test_result(the_fn()))`.
 /// We walk those constants and dig the real function back out.
 ///
-/// Returns an empty vec unless `--test` was passed to rustc.
-pub fn find_test_fns(cx: &LateContext<'_>) -> Vec<DefId> {
-    let mut test_fns = Vec::new();
+/// Returned as a set: `check_item` membership-tests it once per item rustc
+/// visits, which a linear scan would make quadratic on a large crate.
+///
+/// Returns an empty set unless `--test` was passed to rustc.
+pub fn find_test_fns(cx: &LateContext<'_>) -> FxHashSet<DefId> {
+    let mut test_fns = FxHashSet::default();
     for item_id in cx.tcx.hir_free_items() {
         let item = cx.tcx.hir_item(item_id);
         if let ItemKind::Const(_ident, _generics, ty, ConstItemRhs::Body(const_body_id)) = item.kind
@@ -30,7 +34,7 @@ pub fn find_test_fns(cx: &LateContext<'_>) -> Vec<DefId> {
             && let ExprKind::Call(callee, _) = arg.kind
             && let Some(callee_def_id) = callee.basic_res().opt_def_id()
         {
-            test_fns.push(callee_def_id);
+            test_fns.insert(callee_def_id);
         }
     }
     test_fns
