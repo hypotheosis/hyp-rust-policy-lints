@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo"]
+exclude = [".cargo", "target"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -92,7 +92,7 @@ rustflags = ["-C", "linker=dylint-link"]
 ```toml
 [workspace]
 members = ["*"]
-exclude = [".cargo"]
+exclude = [".cargo", "target"]
 
 [workspace.dependencies]
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }

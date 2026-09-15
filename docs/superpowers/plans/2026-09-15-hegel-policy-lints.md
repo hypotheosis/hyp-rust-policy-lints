@@ -94,7 +94,7 @@ EOF
 ```toml
 [workspace]
 members = ["*"]
-exclude = [".cargo"]
+exclude = [".cargo", "target"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -106,6 +106,15 @@ dylint_testing = "6.0"
 level = "deny"
 check-cfg = ["cfg(dylint_lib, values(any()))"]
 ```
+
+`"target"` must be in `exclude`. Without it, `members = ["*"]` matches the
+`lints/target/` directory as soon as the first build creates it, and every
+subsequent build fails with `failed to load manifest for workspace member`.
+The first build from a clean tree succeeds — `target/` does not exist yet when
+the glob is resolved — so this defect hides from any check that only builds
+once. Upstream dylint avoids it instead by setting `target-dir` outside the
+glob root in `.cargo/config.toml`; excluding `target` is equivalent and keeps
+the build output where the rest of this plan expects to find it.
 
 - [ ] **Step 4: Create the lint package**
 
