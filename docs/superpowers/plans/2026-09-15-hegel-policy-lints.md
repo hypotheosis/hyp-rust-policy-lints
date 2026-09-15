@@ -1569,57 +1569,31 @@ mod tests {
 
 - [ ] **Step 3: Write the e2e script**
 
-`scripts/e2e.sh`:
+`scripts/e2e.sh` — see the committed file for the current version. Three
+things about it are load-bearing and were discovered the hard way:
+
+**Capture the exit status on its own line.** The obvious form is wrong:
 
 ```bash
-#!/usr/bin/env bash
-# End-to-end check: run the real cargo-dylint over the consumer fixture and
-# assert each package produces the expected outcome.
-#
-# Asserting on the diagnostic name rather than the exit code alone is
-# deliberate: a library that fails to load produces a clean run that is
-# otherwise indistinguishable from a passing one.
-set -uo pipefail
-
-cd "$(dirname "$0")/../fixtures/consumer" || exit 1
-
-fail=0
-
-expect_clean() {
-  local pkg="$1" out
-  out=$(cargo dylint --all -- --all-targets -p "$pkg" 2>&1)
-  if [ $? -ne 0 ]; then
-    echo "FAIL: $pkg should have passed but did not"
-    echo "$out"
-    fail=1
-  else
-    echo "ok: $pkg clean"
-  fi
-}
-
-expect_lint() {
-  local pkg="$1" lint="$2" out status
-  out=$(cargo dylint --all -- --all-targets -p "$pkg" 2>&1)
-  status=$?
-  if [ $status -eq 0 ]; then
-    echo "FAIL: $pkg should have failed but passed (is the library loading?)"
-    fail=1
-  elif ! grep -q "$lint" <<<"$out"; then
-    echo "FAIL: $pkg failed but did not mention $lint"
-    echo "$out"
-    fail=1
-  else
-    echo "ok: $pkg reported $lint"
-  fi
-}
-
-expect_clean good
-expect_lint  bad          non_hegel_test
-expect_clean exempt_ok
-expect_lint  exempt_bad   hegel_exemption_without_justification
-
-exit "$fail"
+local out
+out=$(cargo dylint ... 2>&1)
+if [ $? -ne 0 ]; then    # tests `local`, not cargo dylint
 ```
+
+`local` always succeeds, so `$?` is always 0 and every clean-expecting check
+reports success unconditionally — including when the lint library fails to load
+entirely. That is the exact silent-pass failure this script exists to prevent.
+
+**Match on `--message-format=json`, not rendered text.** Grepping the human
+output for a lint name produces false positives: the
+`hegel_exemption_without_justification` diagnostic quotes `allow(non_hegel_test)`
+in its own message, so a grep for `non_hegel_test` matches on a package where
+that lint never fired. Match `"code":{"code":"<lint>"` instead, and re-run in
+human format only when reporting a failure.
+
+**Assert the full lint set per package, not one name.** `bad` legitimately fires
+two lints; asserting only `non_hegel_test` would leave the crate-level lint
+untested end to end, and an unexpected extra lint would go unnoticed.
 
 ```bash
 chmod +x scripts/e2e.sh
@@ -1635,10 +1609,15 @@ Expected output, all four lines:
 
 ```
 ok: good clean
-ok: bad reported non_hegel_test
+ok: bad reported crate_without_hegel_tests non_hegel_test
 ok: exempt_ok clean
 ok: exempt_bad reported hegel_exemption_without_justification
 ```
+
+`bad` reports two lints: it has tests and none are hegel, so the crate-level
+lint fires alongside the per-test one. `exempt_bad` reports only the
+justification lint, because its `always_three_chars` hegel test keeps the crate
+count non-zero.
 
 If `good` fails, the real crate's expansion chain is reporting a `[lib]` name not in `HEGEL_CRATE_NAMES`. The Task 2 spike observed `hegel_macros` for `#[hegel::test]`; check `docs/superpowers/notes/2026-09-15-api-spike.md` and reconcile rather than guessing.
 
