@@ -19,7 +19,7 @@ declare_lint! {
     ///
     /// ### Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[test]
     /// fn addition_works() {
     ///     assert_eq!(2 + 2, 4);
@@ -28,7 +28,7 @@ declare_lint! {
     ///
     /// Use instead:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[hegel::test]
     /// fn addition_commutes(tc: hegel::TestCase) {
     ///     let a = tc.draw(hegel::generators::integers::<i64>());

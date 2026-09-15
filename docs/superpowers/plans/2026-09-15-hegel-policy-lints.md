@@ -26,6 +26,8 @@ You are almost certainly unfamiliar with dylint. Read this section; it will save
 - *UI tests* (`lints/hyp_hegel/ui/`) compile a `.rs` fixture and diff rustc's stderr against a committed `.stderr` file. They test the pass logic. They do not test packaging at all.
 - *E2E tests* (`fixtures/consumer/`) run real `cargo dylint` over real crates. They test the glob pattern, the cdylib entry point, the `dylint_lib` cfg, and the `--all-targets` requirement — none of which a UI test can see.
 
+**Doc examples in `declare_lint!` must be `rust,ignore`.** The lint package is built as an `rlib` as well as a `cdylib`, so rustdoc compiles every ```` ```rust ```` block in a `declare_lint!` doc comment as a real doctest. Those examples reference `hegel::test` and friends, and the lint crate deliberately does not depend on the framework it polices — so an unannotated fence fails `cargo test` with `E0433: cannot find module or crate hegel`. The UI-test command skips doctests, so this failure is invisible until CI runs bare `cargo test`.
+
 **The `--all-targets` trap.** The lint can only see tests when the test harness is compiled. Every `cargo dylint` invocation in this project must pass `-- --all-targets`. If you forget, the lint loads, finds zero tests, reports nothing, and looks like it passed.
 
 **Regenerating `.stderr` files.** There is no bless mode. `dylint_testing` 6.0.4 builds its `compiletest::Config` without ever setting `bless`, and `compiletest_rs` 0.11.2 hardcodes `bless: false` in its `Default` impl, so `BLESS=1` and every other env var are silently ignored.
@@ -288,11 +290,11 @@ declare_lint! {
     /// It is not; this lint never fires.
     ///
     /// ### Example
-    /// ```rust
+    /// ```rust,ignore
     /// // nothing
     /// ```
     /// Use instead:
-    /// ```rust
+    /// ```rust,ignore
     /// // nothing
     /// ```
     pub HYP_PROBE,
@@ -485,7 +487,7 @@ declare_lint! {
     ///
     /// ### Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[test]
     /// fn addition_works() {
     ///     assert_eq!(2 + 2, 4);
@@ -494,7 +496,7 @@ declare_lint! {
     ///
     /// Use instead:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[hegel::test]
     /// fn addition_commutes(tc: hegel::TestCase) {
     ///     let a = tc.draw(hegel::generators::integers::<i64>());
@@ -574,13 +576,15 @@ cat hyp_hegel/ui/plain_test.stderr
 
 Expected: `plain_test.stderr` contains one `error: test does not use the hegel property-testing framework` pointing at `fn plain_assertion`, with the help line. **Read it before continuing** — if the span points somewhere unexpected, fix the lint rather than accepting the blessed output.
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 ```bash
-cd lints && cargo test --package hyp_hegel --test ui
+cd lints && cargo test -p hyp_hegel
 ```
 
-Expected: PASS.
+Expected: PASS, including the doctests. Use the bare form rather than
+`--test ui` — the latter skips doctests, and the `declare_lint!` doc comments
+are compiled as doctests by rustdoc.
 
 - [ ] **Step 8: Commit**
 
@@ -815,8 +819,10 @@ cd lints
 # saved to <path>" for each fixture; read each one, then copy it into
 # hyp_hegel/ui/. There is no bless mode -- see the Background section.
 cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
-# ...copy each into place, then confirm the suite is green:
-cargo test --package hyp_hegel --test ui
+# ...copy each into place, then confirm the whole package is green.
+# Use the bare form, not `--test ui`: it also runs the doctests generated from
+# the `declare_lint!` doc comments, which `--test ui` silently skips.
+cargo test -p hyp_hegel
 ```
 
 Expected: `hegel_test.stderr` is empty (or absent), `plain_test.stderr` unchanged, test PASSes. If `plain_test.stderr` changed, something regressed — investigate before committing.
@@ -974,8 +980,10 @@ cd lints
 # saved to <path>" for each fixture; read each one, then copy it into
 # hyp_hegel/ui/. There is no bless mode -- see the Background section.
 cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
-# ...copy each into place, then confirm the suite is green:
-cargo test --package hyp_hegel --test ui
+# ...copy each into place, then confirm the whole package is green.
+# Use the bare form, not `--test ui`: it also runs the doctests generated from
+# the `declare_lint!` doc comments, which `--test ui` silently skips.
+cargo test -p hyp_hegel
 ```
 
 Expected: PASS, with `builder_form.stderr` empty and `plain_test.stderr` unchanged. Confirm `plain_test` still fires — an over-broad body scan that matches everything would silently disable the whole lint.
@@ -1078,7 +1086,7 @@ declare_lint! {
     ///
     /// ### Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[allow(non_hegel_test)]
     /// #[test]
     /// fn golden_wire_format() {}
@@ -1086,7 +1094,7 @@ declare_lint! {
     ///
     /// Use instead:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[allow(non_hegel_test, reason = "asserts an exact byte layout; no general property holds")]
     /// #[test]
     /// fn golden_wire_format() {}
@@ -1192,8 +1200,10 @@ cd lints
 # saved to <path>" for each fixture; read each one, then copy it into
 # hyp_hegel/ui/. There is no bless mode -- see the Background section.
 cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
-# ...copy each into place, then confirm the suite is green:
-cargo test --package hyp_hegel --test ui
+# ...copy each into place, then confirm the whole package is green.
+# Use the bare form, not `--test ui`: it also runs the doctests generated from
+# the `declare_lint!` doc comments, which `--test ui` silently skips.
+cargo test -p hyp_hegel
 ```
 
 Expected: PASS. `allow_unjustified.stderr` contains one `hegel_exemption_without_justification` error pointing at the `#[allow]` attribute; `allow_justified.stderr` is empty. Verify both by reading them.
@@ -1257,7 +1267,7 @@ declare_lint! {
     ///
     /// ### Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[test]
     /// fn one() {}
     /// #[test]
@@ -1266,7 +1276,7 @@ declare_lint! {
     ///
     /// Use instead:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// #[hegel::test]
     /// fn property(tc: hegel::TestCase) {}
     /// ```
@@ -1314,8 +1324,10 @@ cd lints
 # saved to <path>" for each fixture; read each one, then copy it into
 # hyp_hegel/ui/. There is no bless mode -- see the Background section.
 cargo test --package hyp_hegel --test ui 2>&1 | grep 'saved to'
-# ...copy each into place, then confirm the suite is green:
-cargo test --package hyp_hegel --test ui
+# ...copy each into place, then confirm the whole package is green.
+# Use the bare form, not `--test ui`: it also runs the doctests generated from
+# the `declare_lint!` doc comments, which `--test ui` silently skips.
+cargo test -p hyp_hegel
 ```
 
 Expected: PASS. `no_hegel_tests.stderr` contains `crate_without_hegel_tests`. Critically, check that `hegel_test.stderr` and `builder_form.stderr` are still empty — those crates *do* have hegel tests and must not trip the crate-level check. If they now fire, `hegel_test_count` is not being incremented on the skip path (Task 6, Step 4).
