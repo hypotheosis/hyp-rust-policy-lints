@@ -99,13 +99,21 @@ mkdir -p lints/hyp_hegel/src lints/.cargo
 cat > lints/rust-toolchain.toml <<'EOF'
 [toolchain]
 channel = "nightly-2026-07-09"
-components = ["llvm-tools-preview", "rustc-dev"]
+components = ["llvm-tools-preview", "rustc-dev", "rustfmt", "clippy"]
 EOF
 cat > lints/.cargo/config.toml <<'EOF'
 [target.'cfg(all())']
 rustflags = ["-C", "linker=dylint-link"]
 EOF
 ```
+
+`rustfmt` and `clippy` go beyond what the dylint template lists, because CI runs
+`cargo fmt --check` and `cargo clippy` against this nightly. They are present by
+default only when rustup is configured `profile = "default"`; on a runner image
+using `profile = "minimal"` the auto-installed toolchain has neither, and the
+Format step fails with "rustfmt is not installed for the toolchain". Listing them
+keeps the pin self-describing rather than papering over it with a `rustup
+component add` step in the workflow.
 
 - [ ] **Step 3: Create the workspace root**
 

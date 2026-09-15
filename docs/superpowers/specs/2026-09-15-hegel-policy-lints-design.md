@@ -70,7 +70,7 @@ different working directories.
 ```toml
 [toolchain]
 channel = "nightly-2026-07-09"
-components = ["llvm-tools-preview", "rustc-dev"]
+components = ["llvm-tools-preview", "rustc-dev", "rustfmt", "clippy"]
 ```
 
 Matches the dylint 6.0.4 template. Bumping this channel is a **release event**,
