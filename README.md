@@ -146,8 +146,7 @@ worth being deliberate about.
 as long as the test stays non-hegel, so it is an exemption like any other: an
 `expect` with no `reason`, or a blank one, fails with
 `hegel_exemption_without_justification`. The expectation itself is still
-fulfilled, so no `unfulfilled_lint_expectations` warning is added on top. This
-is new in this release; a reasonless `expect` used to pass.
+fulfilled, so no `unfulfilled_lint_expectations` warning is added on top.
 
 #### Exempting a whole crate
 
