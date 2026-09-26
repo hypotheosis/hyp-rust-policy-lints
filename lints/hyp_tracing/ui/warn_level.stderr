@@ -1,0 +1,15 @@
+warning: function is not instrumented with `#[tracing::instrument]`
+  --> $DIR/warn_level.rs:2:1
+   |
+LL | pub fn plain() {}
+   | ^^^^^^^^^^^^^^
+   |
+   = help: add `#[tracing::instrument]`, or exempt it with `allow(uninstrumented_fn, reason = "...")`
+note: the lint level is defined here
+  --> $DIR/warn_level.rs:1:8
+   |
+LL | #[warn(uninstrumented_fn)]
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: 1 warning emitted
+

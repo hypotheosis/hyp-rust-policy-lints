@@ -1,6 +1,6 @@
 [package]
 name = "hyp_hegel"
-version = "0.1.1"
+version.workspace = true
 description = "hypotheosis policy lints: require hegel property tests"
 edition = "2024"
 publish = false
@@ -15,6 +15,13 @@ dylint_linting = { workspace = true }
 [dev-dependencies]
 dylint_testing = { workspace = true }
 hegeltest = { path = "hegel_stub" }
+# Not used by hyp_hegel's code. `dylint_testing` pulls in `tracing` (via
+# compiletest_rs -> rustfix) with only `std`; without this, a `-p hyp_hegel`
+# build compiles a second, `#[instrument]`-less `libtracing-*.rlib`, and
+# hyp_tracing/tests/ui.rs -- which picks the newest one -- can link its
+# fixtures against it. Depending on it here unifies the features so the target
+# dir only ever holds one `tracing` rlib.
+tracing = { workspace = true }
 
 [features]
 rlib = ["dylint_linting/constituent"]

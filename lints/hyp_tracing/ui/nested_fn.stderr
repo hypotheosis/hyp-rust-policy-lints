@@ -1,0 +1,11 @@
+error: function is not instrumented with `#[tracing::instrument]`
+  --> $DIR/nested_fn.rs:3:5
+   |
+LL |     fn inner() -> u32 {
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = help: add `#[tracing::instrument]`, or exempt it with `allow(uninstrumented_fn, reason = "...")`
+   = note: `#[deny(uninstrumented_fn)]` on by default
+
+error: aborting due to 1 previous error
+

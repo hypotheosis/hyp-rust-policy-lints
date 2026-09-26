@@ -27,7 +27,7 @@ test:
     # those are what catch a ```rust fence that should have been ```rust,ignore.
     cd lints && cargo test
 
-# Real cargo dylint over fixtures/consumer.
+# Real cargo dylint over fixtures/consumer and fixtures/tracing_consumer.
 e2e:
     # Asserts the exact lint set per package, and first asserts the library
     # actually loaded -- one that fails to load produces a clean run that is

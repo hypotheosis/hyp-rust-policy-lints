@@ -61,7 +61,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock', 'fixtures/tracing_consumer/Cargo.lock') }}
           restore-keys: cargo-registry-${{ runner.os }}-
 
       # `cargo install --root` keeps the binaries and cargo's install ledger
@@ -159,7 +159,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock') }}
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('lints/Cargo.lock', 'fixtures/consumer/Cargo.lock', 'fixtures/tracing_consumer/Cargo.lock') }}
           restore-keys: cargo-registry-${{ runner.os }}-
 
       - name: Cache dylint tools
@@ -180,8 +180,10 @@ jobs:
       - name: Cache consumer build
         uses: actions/cache@v4
         with:
-          path: fixtures/consumer/target
-          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
+          path: |
+            fixtures/consumer/target
+            fixtures/tracing_consumer/target
+          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock', 'fixtures/tracing_consumer/Cargo.lock') }}
           restore-keys: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
 
       - name: Install dylint
@@ -193,7 +195,7 @@ jobs:
         run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
 
       # Run from the repository root: the script locates fixtures/consumer
-      # relative to its own path.
+      # and fixtures/tracing_consumer relative to its own path.
       - name: End-to-end assertions
         run: ./scripts/e2e.sh
 
@@ -325,7 +327,7 @@ jobs:
         run: |
           list=$(cargo dylint list --all 2>/dev/null)
           echo "$list"
-          for lint in non_hegel_test hegel_exemption_without_justification crate_without_hegel_tests; do
+          for lint in non_hegel_test hegel_exemption_without_justification crate_without_hegel_tests uninstrumented_fn instrument_exemption_without_justification; do
             if ! grep -qE "^[[:space:]]+${lint}([[:space:]]|$)" <<<"$list"; then
               echo "FAIL: 'cargo dylint list --all' did not report $lint"
               echo "  The action's run passed vacuously: no lint library was loaded."

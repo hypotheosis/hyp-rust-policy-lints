@@ -1,0 +1,20 @@
+[package]
+name = "test_targets"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `harness = false` targets are compiled without `--test`, as plain binaries,
+# so they are what exercises hyp_tracing's integration-test and bench
+# exclusion. (A default test or bench is compiled with `--test`, which is
+# excluded by a different route.)
+[[test]]
+name = "plain_test"
+harness = false
+
+[[bench]]
+name = "plain_bench"
+harness = false
+
+[lints]
+workspace = true

@@ -34,7 +34,7 @@ corrupts the expansion.
 
 **A fixture whose subject is the per-test lint needs a hegel test.** Otherwise
 `crate_without_hegel_tests` also fires and the fixture asserts two things. The
-nine that carry an identical `keeps_crate_lint_quiet` block do so for this
+eleven that carry an identical `keeps_crate_lint_quiet` block do so for this
 reason; the duplication is deliberate, since each fixture is its own crate and
 there is nothing to share it through.
 

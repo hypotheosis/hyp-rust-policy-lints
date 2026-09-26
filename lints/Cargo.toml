@@ -3,10 +3,24 @@ members = ["*"]
 exclude = [".cargo", "target"]
 resolver = "2"
 
+# One version for every lint library. A tag `vX.Y.Z` selects all of lints/*
+# at once -- consumers pin `pattern = "lints/*"` -- so the libraries cannot
+# version independently: `v0.2.0` has to mean one thing.
+[workspace.package]
+version = "0.1.1"
+
 [workspace.dependencies]
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }
 dylint_linting = "6.0"
 dylint_testing = "6.0"
+serde = { version = "1", features = ["derive"] }
+# The real crate, not a stub: hyp_tracing's detection depends on exactly how
+# tracing-attributes assigns spans, and a stub would only test the stub.
+# `attributes` is requested explicitly (it is also a default feature) so every
+# consumer that inherits this entry -- including hyp_hegel's dev-dependency,
+# which exists only to unify features with rustfix's `std`-only `tracing` --
+# asks for the same feature set, and the target dir holds one `tracing` rlib.
+tracing = { version = "0.1", features = ["attributes"] }
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "deny"
@@ -19,3 +33,6 @@ check-cfg = ["cfg(dylint_lib, values(any()))"]
 # resolves to nothing for anyone who pins it.
 [workspace.metadata.release]
 tag-name = "v{{version}}"
+# Every releasable crate moves together and one tag is cut. See
+# [workspace.package] above for why.
+shared-version = true

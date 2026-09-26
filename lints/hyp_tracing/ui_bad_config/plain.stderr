@@ -1,0 +1,4 @@
+error: could not read `[hyp_tracing]` from `dylint.toml`: toml error: unknown field `enable`, expected `enabled` or `reason`
+
+error: aborting due to 1 previous error
+

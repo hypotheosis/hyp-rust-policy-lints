@@ -1,4 +1,4 @@
-#[expect(non_hegel_test)]
+#[expect(non_hegel_test, reason = "pins a legacy example-based check until its property test lands")]
 #[test]
 fn expectation_is_fulfilled() {
     assert_eq!(1 + 1, 2);

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# End-to-end check: run the real cargo-dylint over the consumer fixture and
-# assert each package produces the expected outcome.
+# End-to-end check: run the real cargo-dylint over the consumer fixtures
+# (fixtures/consumer for hyp_hegel, fixtures/tracing_consumer for hyp_tracing)
+# and assert each package produces the expected outcome.
 #
 # Asserting on the diagnostic codes rather than the exit code alone is
 # deliberate: a library that fails to load produces a clean run that is
@@ -25,7 +26,7 @@
 # `non_hegel_test` for a package where it never fired.
 set -uo pipefail
 
-cd "$(dirname "$0")/../fixtures/consumer" || exit 1
+root="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 
 # The lints these fixtures actually exercise. Used only as the precondition's
 # checklist -- the set comparison itself runs against ALL_LINTS, which is
@@ -35,6 +36,8 @@ REQUIRED_LINTS=(
   non_hegel_test
   hegel_exemption_without_justification
   crate_without_hegel_tests
+  uninstrumented_fn
+  instrument_exemption_without_justification
 )
 
 # Every lint the loaded libraries can emit. Filled in by
@@ -85,7 +88,7 @@ require_library_loaded() {
     echo "FAIL: lint library did not load"
     echo "  'cargo dylint list --all' did not report: ${missing[*]}"
     echo "  Every check below would pass vacuously, so none was run."
-    echo "  Check workspace.metadata.dylint.libraries in fixtures/consumer/Cargo.toml."
+    echo "  Check workspace.metadata.dylint.libraries in $PWD/Cargo.toml."
     echo "--- cargo dylint list --all ---"
     cargo dylint list --all 2>&1
     exit 1
@@ -149,6 +152,9 @@ expect_lints() {
   rm -f "$stderr"
 }
 
+# hyp_hegel. hyp_tracing is switched off by fixtures/consumer/dylint.toml,
+# so every package here is also the end-to-end check of that switch.
+cd "$root/fixtures/consumer" || exit 1
 require_library_loaded
 
 expect_lints good
@@ -156,5 +162,20 @@ expect_lints bad          non_hegel_test crate_without_hegel_tests
 expect_lints exempt_ok
 expect_lints exempt_bad   hegel_exemption_without_justification
 expect_lints exempt_crate
+
+# hyp_tracing.
+cd "$root/fixtures/tracing_consumer" || exit 1
+require_library_loaded
+
+expect_lints good
+expect_lints bad          uninstrumented_fn
+expect_lints exempt_ok
+expect_lints exempt_bad   instrument_exemption_without_justification
+# Uninstrumented functions in a build script and in `harness = false` test and
+# bench targets, none of which is compiled with `--test`: all out of scope.
+expect_lints test_targets
+# Functions rewritten by another crate's attribute macro are still checked.
+expect_lints tokio_main_bad   uninstrumented_fn
+expect_lints async_trait_bad  uninstrumented_fn
 
 exit "$fail"
