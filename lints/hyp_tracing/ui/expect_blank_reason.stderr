@@ -1,0 +1,11 @@
+error: `expect(uninstrumented_fn)` without a stated reason
+  --> $DIR/expect_blank_reason.rs:1:10
+   |
+LL | #[expect(uninstrumented_fn, reason = "  ")]
+   |          ^^^^^^^^^^^^^^^^^
+   |
+   = help: add `reason = "..."` explaining why this function is not instrumented
+   = note: `#[deny(instrument_exemption_without_justification)]` on by default
+
+error: aborting due to 1 previous error
+
