@@ -257,33 +257,40 @@ To be documented in the README:
 
 ### 7.1 UI fixtures (`lints/hyp_tracing/ui*/`)
 
-Built with `--edition=2024` and `--extern tracing=…`, without `--test` except
-where noted.
+Built with `--edition=2024` and `--extern tracing=…`. Every run passes a
+`dylint.toml`, empty unless noted, so the environment cannot change results.
+`lints/hyp_tracing/ui/README.md` is the authoritative list. In summary:
 
-Default config (`ui/`), one assertion per fixture:
+Default config (`ui/`, `--crate-type=lib`), one assertion per fixture:
 
-- `instrumented_sync.rs`, `instrumented_async.rs`, `instrumented_method.rs`,
-  `instrumented_trait_default.rs`, `instrumented_trait_impl.rs`: silent.
-- `plain_fn.rs`, `plain_method.rs`, `nested_fn.rs`: fire `uninstrumented_fn`.
-- `const_fn.rs`, `closure_only.rs`, `trait_decl_only.rs`, `derive_only.rs`:
-  silent. These are the §3 exclusions.
-- `test_build.rs`: silent under `--test`. This needs its own harness
-  invocation, because `rustc_flags` apply to a whole run.
-- `allow_justified.rs`, `allow_module_level.rs`, `allow_crate_level.rs`,
-  `allow_impl_level.rs`: silent.
-- `allow_unjustified.rs`, `allow_empty_reason.rs`: fire the justification
-  lint.
-- `warn_level.rs`, `expect_level.rs`, `expect_unfulfilled.rs`,
-  `deny_level.rs`: prove the level is resolved at the function.
-- `local_macro_fn.rs`: a `macro_rules!` defined in the same crate that
-  emits an uninstrumented `fn` does fire.
+- Instrumented, silent: `instrumented_sync`, `instrumented_async`,
+  `instrumented_method`, `instrumented_trait_default`,
+  `instrumented_trait_impl`, `instrumented_err_ret` (the `err`/`ret` body
+  shapes).
+- Uninstrumented, fire `uninstrumented_fn`: `plain_fn`, `plain_method`,
+  `nested_fn`, `local_macro_fn`.
+- The §3 exclusions, silent: `const_fn`, `closure_only`, `trait_decl_only`,
+  `derive_only`.
+- Justified exemptions, silent: `allow_justified`, `allow_module_level`,
+  `allow_crate_level`, `allow_impl_level`, `expect_level`.
+- Unjustified exemptions, fire the justification lint once:
+  `allow_unjustified`, `allow_empty_reason`, `allow_crate_level_unjustified`
+  (deduplicated), `allow_nearest_wins` (the nearest attribute is the one
+  reported), `expect_unjustified`, `expect_blank_reason`,
+  `expect_crate_level_unjustified` (no unfulfilled-expectation warning).
+- Levels resolved at the function: `warn_level`, `deny_level`,
+  `expect_unfulfilled`.
 
-Config variants, each its own `#[test]` with `Test::dylint_toml(...)`:
+Other runs, each its own `#[test]`:
 
-- `ui_disabled/`: a plain function stays silent.
+- `ui_test_build/` (`--test`): test code is silent (`test_helpers`), and
+  `expect`s stay fulfilled (`expect_justified`, `expect_module_unjustified`).
+- `ui_disabled/`: a plain function stays silent, and a justified `expect`
+  stays fulfilled.
 - `ui_disabled_no_reason/` (no `reason`) and `ui_disabled_blank_reason/`
   (`reason = "  "`): each gives exactly one justification diagnostic at the
   crate root, and no `uninstrumented_fn`.
+- `ui_enabled_with_reason/`: a `reason` alone does not switch the policy off.
 - `ui_bad_config/` (`enable = false`): the config error, and nothing else.
 
 Every fixture is checked to be load-bearing, as `ui/README.md` requires:
