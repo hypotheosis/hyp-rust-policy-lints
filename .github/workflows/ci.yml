@@ -180,8 +180,10 @@ jobs:
       - name: Cache consumer build
         uses: actions/cache@v4
         with:
-          path: fixtures/consumer/target
-          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock') }}
+          path: |
+            fixtures/consumer/target
+            fixtures/tracing_consumer/target
+          key: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ hashFiles('fixtures/consumer/Cargo.lock', 'fixtures/tracing_consumer/Cargo.lock') }}
           restore-keys: consumer-build-${{ runner.os }}-${{ env.DYLINT_VERSION }}-
 
       - name: Install dylint
@@ -193,7 +195,7 @@ jobs:
         run: echo "$HOME/.dylint-tools/bin" >> "$GITHUB_PATH"
 
       # Run from the repository root: the script locates fixtures/consumer
-      # relative to its own path.
+      # and fixtures/tracing_consumer relative to its own path.
       - name: End-to-end assertions
         run: ./scripts/e2e.sh
 
