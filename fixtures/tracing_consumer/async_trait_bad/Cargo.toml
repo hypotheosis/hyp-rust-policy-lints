@@ -1,12 +1,10 @@
 [package]
-name = "good"
+name = "async_trait_bad"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-tracing = { workspace = true }
-tokio = { workspace = true }
 async-trait = { workspace = true }
 
 [lints]

@@ -250,10 +250,21 @@ reason = "CLI tool with no tracing subscriber; spans would go nowhere"
 
 To be documented in the README:
 
-- **Functions produced by other attribute macros are not reported.** Examples
-  are the bodies `#[async_trait]` rewrites and a `#[tokio::main]` `main`.
-  rustc cancels diagnostics in external macro expansions, and §2 deliberately
-  does not opt out. This is a false negative.
+- **Functions rewritten by other attribute macros are reported, sometimes at
+  an unhelpful span.** Verified with real `cargo dylint` (tokio 1,
+  async-trait 0.1), and pinned in `fixtures/tracing_consumer`:
+  - An uninstrumented `#[tokio::main]` function is reported at its signature
+    (the `fn` token onwards; tokio drops `async`). `#[tracing::instrument]`
+    either below or above `#[tokio::main]` is detected as instrumented.
+  - An uninstrumented method in an `#[async_trait]` trait (default body) or
+    impl is reported at the `#[async_trait]` attribute, because the macro
+    rewrites the signature. rustc deduplicates identical diagnostics, so
+    several such methods in one block produce one error. `#[tracing::instrument]`
+    on the method inside the block is detected, and a per-method
+    `allow`/`expect` works.
+  Functions an external macro generates without a user-written counterpart
+  (builtin derives, for instance) are not reported: §2 deliberately does not
+  opt into `report_in_external_macro`, so rustc cancels those diagnostics.
 - **Hand-written spans do not count.** A function that already opens a span
   manually still needs `#[instrument]` or an `allow`.
 - **The justification lints can themselves be `allow`ed.** A crate-level
@@ -316,7 +327,10 @@ break the code it guards and confirm this fixture fails.
   packages `good` (sync, async, method, trait default, all instrumented),
   `bad`, `exempt_ok`, `exempt_bad` and `test_targets` (uninstrumented
   functions in a build script and in `harness = false` test and bench
-  targets; must be clean, per §3). It pins the library by `path`, like
+  targets; must be clean, per §3), plus `tokio_main_bad` and
+  `async_trait_bad` (§6: uninstrumented functions rewritten by those macros
+  are reported). `good` also carries the instrumented `#[tokio::main]` and
+  `#[async_trait]` forms. It pins the library by `path`, like
   `fixtures/consumer`. `scripts/e2e.sh` runs it with the same exact-set
   assertions.
 - `fixtures/consumer/` and `fixtures/action_check/` get a `dylint.toml` that

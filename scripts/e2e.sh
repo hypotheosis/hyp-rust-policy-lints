@@ -174,5 +174,8 @@ expect_lints exempt_bad   instrument_exemption_without_justification
 # Uninstrumented functions in a build script and in `harness = false` test and
 # bench targets, none of which is compiled with `--test`: all out of scope.
 expect_lints test_targets
+# Functions rewritten by another crate's attribute macro are still checked.
+expect_lints tokio_main_bad   uninstrumented_fn
+expect_lints async_trait_bad  uninstrumented_fn
 
 exit "$fail"
