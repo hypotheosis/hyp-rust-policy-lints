@@ -103,7 +103,8 @@ def main() -> None:
     print(
         f"""## Lints
 
-All three are **Deny** by default and live in the `hyp_hegel` library.
+Every lint is **Deny** by default. The Library column says which library each
+one lives in; `pattern = "lints/*"` loads them all.
 
 {lints}
 

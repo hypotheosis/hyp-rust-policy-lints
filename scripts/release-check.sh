@@ -47,6 +47,8 @@ REQUIRED_LINTS=(
   non_hegel_test
   hegel_exemption_without_justification
   crate_without_hegel_tests
+  uninstrumented_fn
+  instrument_exemption_without_justification
 )
 
 ALL_LINTS=()
@@ -150,8 +152,10 @@ publish = false
 workspace = true
 EOF
 
-# Must fire non_hegel_test (a plain #[test]) and crate_without_hegel_tests (a
-# test harness with no hegel property test in it).
+# Must fire non_hegel_test (a plain #[test]), crate_without_hegel_tests (a
+# test harness with no hegel property test in it) and uninstrumented_fn (add
+# has no #[tracing::instrument]) -- the last proving hyp_tracing loads through
+# the git pin too.
 cat > "$work/violating/src/lib.rs" <<'EOF'
 pub fn add(a: i64, b: i64) -> i64 {
     a.wrapping_add(b)
@@ -182,8 +186,9 @@ EOF
 # Must be clean. A check that only ever asserts "lints fired" would stay green
 # if the library started reporting every package unconditionally, and it also
 # would not prove that the `cfg_attr(dylint_lib = ...)` exemption path survives
-# the git-fetched build. Both exemptions are needed: allow(non_hegel_test) does
-# not suppress crate_without_hegel_tests.
+# the git-fetched build. All three exemptions are needed: allow(non_hegel_test)
+# does not suppress crate_without_hegel_tests, and neither touches
+# uninstrumented_fn.
 cat > "$work/exempted/src/lib.rs" <<'EOF'
 #![cfg_attr(
     dylint_lib = "hyp_hegel",
@@ -197,6 +202,13 @@ cat > "$work/exempted/src/lib.rs" <<'EOF'
     allow(
         crate_without_hegel_tests,
         reason = "release-check probe: fixed table lookup, an enumerated set rather than a domain to sample"
+    )
+)]
+#![cfg_attr(
+    dylint_lib = "hyp_tracing",
+    allow(
+        uninstrumented_fn,
+        reason = "release-check probe: a dependency-free workspace, so tracing is not available"
     )
 )]
 
@@ -325,7 +337,7 @@ expect_lints() {
 
 require_library_loaded
 
-expect_lints violating non_hegel_test crate_without_hegel_tests
+expect_lints violating non_hegel_test crate_without_hegel_tests uninstrumented_fn
 expect_lints exempted
 
 if [ "$fail" -ne 0 ]; then
