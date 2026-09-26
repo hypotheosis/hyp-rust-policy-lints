@@ -171,5 +171,8 @@ expect_lints good
 expect_lints bad          uninstrumented_fn
 expect_lints exempt_ok
 expect_lints exempt_bad   instrument_exemption_without_justification
+# Uninstrumented functions in a build script and in `harness = false` test and
+# bench targets, none of which is compiled with `--test`: all out of scope.
+expect_lints test_targets
 
 exit "$fail"

@@ -108,6 +108,20 @@ Out of scope:
   in the ordinary lib/bin compilation. `--all-targets` compiles both, and a
   run without `--all-targets` still checks production code, so this lint does
   not share `hyp_hegel`'s dependence on that flag.
+- **Build scripts, and cargo integration-test and bench targets of any
+  kind.** A `harness = false` test or bench (`[[test]]`/`[[bench]]` with
+  `harness = false`) is compiled without `--test`, as a plain binary, and a
+  build script always is; the `--test` rule misses them. They are treated the
+  same way: a build script is recognised by its crate name, which cargo always
+  sets to `build_script_<file stem>` (`build_script_build` for `build.rs`),
+  and an integration test or bench by `CARGO_TARGET_TMPDIR` in the compiler's
+  environment, which cargo sets for exactly those two target kinds, whatever
+  their `harness`, and never for a library, binary, example or build script.
+  Both were verified against real `cargo dylint` runs.
+
+In scope, by contrast: **examples**. An example is an ordinary binary, and
+nothing in its compilation reliably marks it as an example, so its functions
+are checked like any binary's.
 
 Implementation: `check_fn` with `FnKind::ItemFn` / `FnKind::Method`, skipping
 `FnKind::Closure`, and reading `constness` off the `FnHeader`.
@@ -300,7 +314,9 @@ break the code it guards and confirm this fixture fails.
 
 - New workspace `fixtures/tracing_consumer/` with `tracing` from crates.io and
   packages `good` (sync, async, method, trait default, all instrumented),
-  `bad`, `exempt_ok` and `exempt_bad`. It pins the library by `path`, like
+  `bad`, `exempt_ok`, `exempt_bad` and `test_targets` (uninstrumented
+  functions in a build script and in `harness = false` test and bench
+  targets; must be clean, per §3). It pins the library by `path`, like
   `fixtures/consumer`. `scripts/e2e.sh` runs it with the same exact-set
   assertions.
 - `fixtures/consumer/` and `fixtures/action_check/` get a `dylint.toml` that

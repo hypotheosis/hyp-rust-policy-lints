@@ -3,11 +3,12 @@
 # separate workspaces because `dylint.toml` is per workspace, and
 # fixtures/consumer switches hyp_tracing off.
 #
-# None of these packages has tests, so hyp_hegel's lints stay silent here: a
-# crate with no test harness is out of its scope.
+# None of these packages has a test harness -- `test_targets` has tests and
+# benches, but only `harness = false` ones -- so hyp_hegel's lints stay silent
+# here: a crate with no test harness is out of its scope.
 
 [workspace]
-members = ["good", "bad", "exempt_ok", "exempt_bad"]
+members = ["good", "bad", "exempt_ok", "exempt_bad", "test_targets"]
 resolver = "2"
 
 [workspace.dependencies]

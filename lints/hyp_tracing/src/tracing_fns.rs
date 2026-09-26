@@ -1,7 +1,7 @@
 use crate::config::{self, Mode};
 use crate::instrument_detect::body_is_instrumented;
 use clippy_utils::diagnostics::span_lint_hir_and_then;
-use rustc_hir::def_id::{CRATE_DEF_ID, LocalDefId};
+use rustc_hir::def_id::{CRATE_DEF_ID, LOCAL_CRATE, LocalDefId};
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{Body, CRATE_HIR_ID, FnDecl, HirId};
 use rustc_lint::{LateContext, LateLintPass};
@@ -15,8 +15,10 @@ declare_lint! {
     ///
     /// Checks for functions that are not instrumented with
     /// `#[tracing::instrument]`. Every free function, inherent method,
-    /// trait-impl method and trait default method with a body is in scope;
-    /// `const fn`s, closures and anything compiled under `--test` are not.
+    /// trait-impl method and trait default method with a body is in scope,
+    /// examples included; `const fn`s, closures, build scripts, cargo
+    /// integration tests and benches, and anything compiled under `--test` are
+    /// not.
     ///
     /// ### Why is this bad?
     ///
@@ -99,8 +101,9 @@ enum PassMode {
     /// The policy applies: every uninstrumented function is reported, and so
     /// is every exemption without a reason.
     Enforce,
-    /// The policy does not apply -- a `--test` compilation, or a workspace
-    /// switched off in `dylint.toml` -- so nothing is *shown*. The pass emits
+    /// The policy does not apply -- a `--test` compilation, a build script, a
+    /// cargo integration test or bench, or a workspace switched off in
+    /// `dylint.toml` -- so nothing is *shown*. The pass emits
     /// `uninstrumented_fn` only for an uninstrumented function whose level is
     /// `expect`, and only to fulfil that expectation: rustc absorbs the
     /// diagnostic and never shows it. Without it, a justified
@@ -127,11 +130,19 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         // run *without* `--all-targets` performs, so unlike `hyp_hegel` this
         // library does not depend on that flag.
         //
+        // Build scripts and cargo's integration-test and bench targets are
+        // left alone the same way, because they are not always compiled with
+        // `--test`: a `harness = false` test or bench is an ordinary binary
+        // with its own `fn main`, and a build script always is. See
+        // `is_build_script` and `is_cargo_test_or_bench_target`. Examples stay
+        // in scope: they are ordinary binaries, and nothing reliable marks one
+        // as an example.
+        //
         // A library's production functions are compiled here too, though, so
         // the pass stays in `FulfilExpectationsOnly` rather than doing nothing:
         // an `expect(uninstrumented_fn)` on one of them must still be
         // fulfilled. See `PassMode`.
-        if cx.tcx.sess.opts.test {
+        if cx.tcx.sess.opts.test || is_build_script(cx) || is_cargo_test_or_bench_target() {
             return;
         }
 
@@ -282,9 +293,37 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
     }
 }
 
+/// Whether the crate being compiled is a cargo build script.
+///
+/// Cargo compiles `build.rs` as a crate named `build_script_build`, and a
+/// script set with `build = "gen.rs"` as `build_script_gen`: always
+/// `build_script_` followed by the file stem. The crate name is read from the
+/// compiler rather than from cargo's `CARGO_CRATE_NAME`, which carries the
+/// same value, so the check holds for any driver that names the crate. A
+/// library or binary would have to be named `build_script_*` on purpose to be
+/// caught by this.
+fn is_build_script(cx: &LateContext<'_>) -> bool {
+    cx.tcx
+        .crate_name(LOCAL_CRATE)
+        .as_str()
+        .starts_with("build_script_")
+}
+
+/// Whether cargo is compiling an integration test (`tests/`) or a benchmark
+/// (`benches/`).
+///
+/// Cargo sets `CARGO_TARGET_TMPDIR` in the compiler's environment for those
+/// two target kinds only, whatever their `harness` setting, and never for a
+/// library, binary, example or build script. It is the one marker that covers
+/// `harness = false` targets, which are compiled without `--test`. A default
+/// (`harness = true`) test or bench is already caught by the `--test` check.
+fn is_cargo_test_or_bench_target() -> bool {
+    std::env::var_os("CARGO_TARGET_TMPDIR").is_some()
+}
+
 /// Whether an `allow`/`expect` attribute states a reason. Only the *presence*
 /// of a non-blank reason is checked, never its quality; why `reason = "n/a"`
-/// passes and only blank reasons fail: see the same arm in
+/// passes and only blank reasons fail: see `has_reason`'s doc comment in
 /// `hyp_hegel/src/hegel_tests.rs`.
 fn has_reason(reason: Option<Symbol>) -> bool {
     reason.is_some_and(|reason| !reason.as_str().trim().is_empty())
