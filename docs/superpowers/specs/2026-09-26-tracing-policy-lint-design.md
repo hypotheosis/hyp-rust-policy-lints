@@ -126,7 +126,7 @@ A spike against `tracing-attributes 0.1.31` on this nightly
   for sync functions, `let __tracing_instrument_future = …` for async ones)
   sits in the context of the expansion `Macro(Attr, "tracing::instrument")`.
 
-So a function counts as **instrumented** if any expression or `let` binding in
+So a function counts as **instrumented** if any expression in
 its body has a span whose expansion chain (walk `outer_expn_data().call_site`
 to the root) contains an expansion whose `macro_def_id` belongs to the crate
 whose `[lib]` name is `tracing_attributes`. Matching on the `[lib]` name
@@ -179,6 +179,17 @@ The decision table is the one `hyp_hegel` uses, with the `Expect` row added to b
 which makes it an exemption, and every exemption must be justified. The same
 rule is applied to `hyp_hegel`'s `non_hegel_test` in this branch, to close the
 identical gap there. `crate_without_hegel_tests` is unchanged.
+
+**Keeping `expect` fulfilled when the pass is not enforcing.** In a `--test`
+compilation, and in a workspace switched off in `dylint.toml`, the pass
+reports nothing. Yet a library's non-test functions are compiled there too,
+and an `#[expect(uninstrumented_fn, ...)]` on one of them would then be
+reported by rustc as `unfulfilled_lint_expectations`, which fails a
+`-D warnings` build. So in those modes the pass still visits each function
+whose level is `Expect`. If the function is uninstrumented, it emits
+`uninstrumented_fn`, which rustc absorbs into the expectation and never
+shows. Nothing else is reported in those modes, including missing reasons.
+Those are reported by the ordinary, enforcing compilation.
 
 ### 5.2 Whole workspace: `dylint.toml`
 
