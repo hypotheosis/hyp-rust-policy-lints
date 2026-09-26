@@ -1,5 +1,5 @@
-use rustc_hir::intravisit::{Visitor, walk_expr, walk_local};
-use rustc_hir::{Body, Expr, LetStmt};
+use rustc_hir::intravisit::{Visitor, walk_expr};
+use rustc_hir::{Body, Expr};
 use rustc_lint::LateContext;
 use rustc_middle::hir::nested_filter;
 use rustc_span::Span;
@@ -20,7 +20,8 @@ const INSTRUMENT_CRATE: &str = "tracing_attributes";
 /// `let __tracing_attr_span; ...` prologue (sync) and the
 /// `let __tracing_instrument_future = ...` wrapper (async) are emitted in the
 /// attribute's own expansion context. So the body is searched for any
-/// expression or `let` whose span passes through that expansion.
+/// expression whose span passes through that expansion; every instrumented
+/// shape contains one, so `let` statements need no separate check.
 ///
 /// For an instrumented function the first thing visited already matches, so
 /// the common case is cheap; only a function about to be *reported* pays for
@@ -70,16 +71,5 @@ impl<'tcx> Visitor<'tcx> for InstrumentFinder<'_, 'tcx> {
             return;
         }
         walk_expr(self, expr);
-    }
-
-    fn visit_local(&mut self, local: &'tcx LetStmt<'tcx>) {
-        if self.found {
-            return;
-        }
-        if from_instrument(self.cx, local.span) {
-            self.found = true;
-            return;
-        }
-        walk_local(self, local);
     }
 }
