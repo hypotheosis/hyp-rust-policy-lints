@@ -4,6 +4,8 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{Body, FnDecl};
 use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::lint::LintLevelSource;
+use rustc_session::lint::Level;
 use rustc_session::{declare_lint, impl_lint_pass};
 use rustc_span::Span;
 
@@ -112,17 +114,69 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         }
 
         let hir_id = cx.tcx.local_def_id_to_hir_id(def_id);
-        span_lint_hir_and_then(
-            cx,
-            UNINSTRUMENTED_FN,
-            hir_id,
-            cx.tcx.def_span(def_id),
-            "function is not instrumented with `#[tracing::instrument]`",
-            |diag| {
-                diag.help(
-                    "add `#[tracing::instrument]`, or exempt it with `allow(uninstrumented_fn, reason = \"...\")`",
+
+        // An `allow` suppresses `uninstrumented_fn` by construction, so the
+        // justified and unjustified cases are indistinguishable from the
+        // emission path alone -- the level has to be inspected directly. Same
+        // table as `hyp_hegel`'s `non_hegel_test`; see `hegel_tests.rs` for the
+        // API notes on `lint_level_spec_at_node`.
+        let spec = cx.tcx.lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id);
+
+        match (spec.level(), spec.src) {
+            // Exempted in source with a stated reason: accepted. Only the
+            // *presence* of a non-blank reason is checked, never its quality.
+            (
+                Level::Allow,
+                LintLevelSource::Node {
+                    reason: Some(reason),
+                    ..
+                },
+            ) if !reason.as_str().trim().is_empty() => {}
+
+            // Exempted in source with no reason, or a blank one: report the
+            // attribute. `span` covers just the lint name inside it.
+            (
+                Level::Allow,
+                LintLevelSource::Node {
+                    span: attr_span, ..
+                },
+            ) => {
+                span_lint_hir_and_then(
+                    cx,
+                    INSTRUMENT_EXEMPTION_WITHOUT_JUSTIFICATION,
+                    hir_id,
+                    attr_span,
+                    "`allow(uninstrumented_fn)` without a stated reason",
+                    |diag| {
+                        diag.help(
+                            "add `reason = \"...\"` explaining why this function is not instrumented",
+                        );
+                    },
                 );
-            },
-        );
+            }
+
+            // Allowed from the command line (`-A uninstrumented_fn`): a
+            // deliberate operator decision, not a source-level exemption.
+            (Level::Allow, _) => {}
+
+            // Everything else -- the `Deny` default, or an explicit `warn`,
+            // `deny` or `expect` -- is emitted at the function's own `HirId`,
+            // so rustc resolves the level against the function and its
+            // parents, not against whichever node the pass is visiting.
+            _ => {
+                span_lint_hir_and_then(
+                    cx,
+                    UNINSTRUMENTED_FN,
+                    hir_id,
+                    cx.tcx.def_span(def_id),
+                    "function is not instrumented with `#[tracing::instrument]`",
+                    |diag| {
+                        diag.help(
+                            "add `#[tracing::instrument]`, or exempt it with `allow(uninstrumented_fn, reason = \"...\")`",
+                        );
+                    },
+                );
+            }
+        }
     }
 }
