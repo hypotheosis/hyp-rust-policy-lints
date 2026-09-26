@@ -457,6 +457,7 @@ dependencies = [
  "dylint_linting",
  "dylint_testing",
  "hegeltest",
+ "tracing",
 ]
 
 [[package]]

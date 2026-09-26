@@ -16,7 +16,11 @@ dylint_testing = "6.0"
 serde = { version = "1", features = ["derive"] }
 # The real crate, not a stub: hyp_tracing's detection depends on exactly how
 # tracing-attributes assigns spans, and a stub would only test the stub.
-tracing = "0.1"
+# `attributes` is requested explicitly (it is also a default feature) so every
+# consumer that inherits this entry -- including hyp_hegel's dev-dependency,
+# which exists only to unify features with rustfix's `std`-only `tracing` --
+# asks for the same feature set, and the target dir holds one `tracing` rlib.
+tracing = { version = "0.1", features = ["attributes"] }
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "deny"

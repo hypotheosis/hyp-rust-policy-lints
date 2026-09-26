@@ -37,7 +37,10 @@ fn run(src_base: &str, build: Build, dylint_toml: Option<&str>) {
         Build::Library => flags.push("--crate-type=lib".to_owned()),
     }
 
-    let mut test = dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), src_base);
+    // Absolute, so compiletest's `$DIR` substitution matches only the fixture
+    // directory's full path, not every "ui" inside words like "builds".
+    let src_base = Path::new(env!("CARGO_MANIFEST_DIR")).join(src_base);
+    let mut test = dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), &src_base);
     test.rustc_flags(flags);
     if let Some(dylint_toml) = dylint_toml {
         test.dylint_toml(dylint_toml);
@@ -61,6 +64,13 @@ fn deps_dir() -> PathBuf {
 /// newest is the one the current `Cargo.lock` produced. A copy of
 /// `hyp_hegel/tests/ui.rs`'s helper: each lint crate is its own test binary
 /// and there is no shared crate to put it in.
+///
+/// For `tracing` this relies on feature unification: `dylint_testing` pulls in
+/// `tracing` via rustfix with only `std`, and hyp_hegel carries a `tracing`
+/// dev-dependency solely so every workspace build asks for the same features
+/// (incl. `attributes`) and produces one rlib. If a build without `attributes`
+/// is ever newest, every fixture fails with "cannot find attribute
+/// `instrument` in `tracing`"; `cargo clean -p tracing` clears the stale rlib.
 fn rlib(dir: &Path, name: &str) -> PathBuf {
     let prefix = format!("lib{name}-");
     let mut candidates = read_dir(dir)
