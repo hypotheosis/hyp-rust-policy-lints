@@ -88,16 +88,36 @@ declare_lint! {
 
 #[derive(Default)]
 pub struct TracingFns {
-    /// Whether `check_fn` reports anything for the crate being compiled.
-    /// Decided once, in `check_crate`.
-    enforce: bool,
+    /// What `check_fn` reports for the crate being compiled. Decided once, in
+    /// `check_crate`.
+    mode: PassMode,
+}
+
+/// What `check_fn` reports for the crate being compiled.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum PassMode {
+    /// The policy applies: every uninstrumented function is reported, and so
+    /// is every exemption without a reason.
+    Enforce,
+    /// The policy does not apply -- a `--test` compilation, or a workspace
+    /// switched off in `dylint.toml` -- so nothing is reported. The pass still
+    /// emits `uninstrumented_fn` for an uninstrumented function whose level is
+    /// `expect`, which rustc absorbs into the expectation and never shows.
+    /// Without it, a justified `#[expect(uninstrumented_fn, ...)]` on a library
+    /// function would become `unfulfilled_lint_expectations` in these
+    /// compilations and fail a `-D warnings` build. Missing reasons are not
+    /// reported here; the enforcing compilation reports them.
+    ///
+    /// The default, so a pass `check_crate` has not configured reports nothing.
+    #[default]
+    FulfilExpectationsOnly,
 }
 
 impl_lint_pass!(TracingFns => [UNINSTRUMENTED_FN, INSTRUMENT_EXEMPTION_WITHOUT_JUSTIFICATION]);
 
 impl<'tcx> LateLintPass<'tcx> for TracingFns {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
-        self.enforce = false;
+        self.mode = PassMode::FulfilExpectationsOnly;
 
         // A `--test` compilation is test code: `#[test]` functions,
         // `#[cfg(test)]` helpers, integration-test crates. None of it needs a
@@ -105,6 +125,11 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         // compilation that `--all-targets` also performs -- and in the one a
         // run *without* `--all-targets` performs, so unlike `hyp_hegel` this
         // library does not depend on that flag.
+        //
+        // A library's production functions are compiled here too, though, so
+        // the pass stays in `FulfilExpectationsOnly` rather than doing nothing:
+        // an `expect(uninstrumented_fn)` on one of them must still be
+        // fulfilled. See `PassMode`.
         if cx.tcx.sess.opts.test {
             return;
         }
@@ -125,12 +150,13 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         };
 
         match config.mode() {
-            Mode::Enforce => self.enforce = true,
+            Mode::Enforce => self.mode = PassMode::Enforce,
+            // Switched off: only `expect`s are fulfilled (see `PassMode`).
             Mode::Off => {}
             // Reported once, at the crate root (the span
-            // `crate_without_hegel_tests` uses), and `uninstrumented_fn` stays
-            // off: the configuration is what needs fixing, and an error per
-            // function would bury it.
+            // `crate_without_hegel_tests` uses), and otherwise treated as `Off`:
+            // the configuration is what needs fixing, and an error per function
+            // would bury it.
             Mode::OffWithoutReason => {
                 let crate_span = cx.tcx.def_span(CRATE_DEF_ID);
                 let span = cx.tcx.sess.source_map().start_point(crate_span);
@@ -159,15 +185,21 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         _span: Span,
         def_id: LocalDefId,
     ) {
-        if !self.enforce {
-            return;
-        }
-
         // Closures are not something a consumer can annotate, and a `const fn`
         // cannot take `#[instrument]` at all. An `async fn` arrives here twice
         // -- as the function (`ItemFn`/`Method`) and as its coroutine
         // (`Closure`) -- and only the first is checked.
         if matches!(kind, FnKind::Closure) || cx.tcx.is_const_fn(def_id.to_def_id()) {
+            return;
+        }
+
+        let hir_id = cx.tcx.local_def_id_to_hir_id(def_id);
+        let spec = cx.tcx.lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id);
+
+        // Not enforcing, so only an `expect` needs anything from the pass. The
+        // level is queried before the body is walked, so a `--test` build pays
+        // one lookup per function, not a walk.
+        if self.mode == PassMode::FulfilExpectationsOnly && spec.level() != Level::Expect {
             return;
         }
 
@@ -177,7 +209,12 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
             return;
         }
 
-        let hir_id = cx.tcx.local_def_id_to_hir_id(def_id);
+        if self.mode == PassMode::FulfilExpectationsOnly {
+            // Fulfil the expectation; rustc absorbs the diagnostic. A missing
+            // reason is left to the enforcing compilation to report.
+            emit_uninstrumented(cx, hir_id, def_id);
+            return;
+        }
 
         // An `allow` suppresses `uninstrumented_fn` by construction, so the
         // justified and unjustified cases are indistinguishable from the
@@ -195,8 +232,6 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         // `deny`/`warn` attribute can reach a `Node` arm -- where the
         // justification diagnostic is itself capped and never shown. Both are
         // harmless; do not "fix" these arms for them.
-        let spec = cx.tcx.lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id);
-
         match (spec.level(), spec.src) {
             // Exempted in source with a stated reason: accepted.
             (Level::Allow, LintLevelSource::Node { reason, .. }) if has_reason(reason) => {}
