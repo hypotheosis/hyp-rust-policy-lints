@@ -3,6 +3,12 @@ members = ["*"]
 exclude = [".cargo", "target"]
 resolver = "2"
 
+# One version for every lint library. A tag `vX.Y.Z` selects all of lints/*
+# at once -- consumers pin `pattern = "lints/*"` -- so the libraries cannot
+# version independently: `v0.2.0` has to mean one thing.
+[workspace.package]
+version = "0.1.1"
+
 [workspace.dependencies]
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }
 dylint_linting = "6.0"
@@ -19,3 +25,6 @@ check-cfg = ["cfg(dylint_lib, values(any()))"]
 # resolves to nothing for anyone who pins it.
 [workspace.metadata.release]
 tag-name = "v{{version}}"
+# Every releasable crate moves together and one tag is cut. See
+# [workspace.package] above for why.
+shared-version = true
