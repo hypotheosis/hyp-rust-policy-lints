@@ -119,7 +119,12 @@ release level: release-preflight check
     # --no-verify: the packaging check builds each crate in isolation, which for
     #   a rustc_private cdylib means a full clippy_utils build against
     #   rustc-dev. `just check` already built and tested the real thing.
-    cd lints && cargo release --no-publish --no-verify "{{level}}" --execute
+    # Subshell: a bare `cd` here would persist for the rest of this script, and
+    # the `cargo metadata` below resolves its --manifest-path from the repo
+    # root. Without the parentheses that lookup runs from lints/ and fails
+    # *after* the tag has already been pushed, so a successful release exits 1
+    # and looks like a failed one.
+    ( cd lints && cargo release --no-publish --no-verify "{{level}}" --execute )
 
     version="$(cargo metadata --no-deps --format-version 1 \
       --manifest-path lints/hyp_hegel/Cargo.toml \
