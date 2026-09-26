@@ -1,0 +1,9 @@
+# This workspace exercises hyp_hegel, and its packages' functions are
+# deliberately uninstrumented. Switching hyp_tracing off here keeps each
+# package's expected lint set about hyp_hegel alone -- and is also the
+# end-to-end check that the switch works through real `cargo dylint`: if it
+# stopped working, `good` would start failing with `uninstrumented_fn`.
+# hyp_tracing itself is exercised by fixtures/tracing_consumer.
+[hyp_tracing]
+enabled = false
+reason = "hyp_hegel fixture workspace; hyp_tracing is exercised by fixtures/tracing_consumer"

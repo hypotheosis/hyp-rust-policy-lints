@@ -1,0 +1,5 @@
+# The action job needs a workspace that passes. This one is about hyp_hegel,
+# and its function is uninstrumented.
+[hyp_tracing]
+enabled = false
+reason = "action smoke-test workspace; hyp_tracing is exercised by fixtures/tracing_consumer"

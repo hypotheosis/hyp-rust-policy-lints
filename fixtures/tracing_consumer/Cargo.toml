@@ -1,0 +1,22 @@
+# End-to-end fixture for hyp_tracing: real `cargo dylint` over real crates using
+# the real `tracing`. The hyp_hegel counterpart is fixtures/consumer. They are
+# separate workspaces because `dylint.toml` is per workspace, and
+# fixtures/consumer switches hyp_tracing off.
+#
+# None of these packages has tests, so hyp_hegel's lints stay silent here: a
+# crate with no test harness is out of its scope.
+
+[workspace]
+members = ["good", "bad", "exempt_ok", "exempt_bad"]
+resolver = "2"
+
+[workspace.dependencies]
+tracing = "0.1"
+
+# `path` rather than `git`/`tag`, for the reason given in fixtures/consumer.
+[workspace.metadata.dylint]
+libraries = [{ path = "../../lints/*" }]
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(dylint_lib, values(any()))"]
