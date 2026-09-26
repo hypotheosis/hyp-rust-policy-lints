@@ -100,15 +100,16 @@ enum PassMode {
     /// is every exemption without a reason.
     Enforce,
     /// The policy does not apply -- a `--test` compilation, or a workspace
-    /// switched off in `dylint.toml` -- so nothing is reported. The pass still
-    /// emits `uninstrumented_fn` for an uninstrumented function whose level is
-    /// `expect`, which rustc absorbs into the expectation and never shows.
-    /// Without it, a justified `#[expect(uninstrumented_fn, ...)]` on a library
-    /// function would become `unfulfilled_lint_expectations` in these
-    /// compilations and fail a `-D warnings` build. Missing reasons are not
-    /// reported here; the enforcing compilation reports them.
+    /// switched off in `dylint.toml` -- so nothing is *shown*. The pass emits
+    /// `uninstrumented_fn` only for an uninstrumented function whose level is
+    /// `expect`, and only to fulfil that expectation: rustc absorbs the
+    /// diagnostic and never shows it. Without it, a justified
+    /// `#[expect(uninstrumented_fn, ...)]` on a library function would become
+    /// `unfulfilled_lint_expectations` in these compilations and fail a
+    /// `-D warnings` build. Missing reasons are not reported here; the
+    /// enforcing compilation reports them.
     ///
-    /// The default, so a pass `check_crate` has not configured reports nothing.
+    /// The default, so a pass `check_crate` has not configured shows nothing.
     #[default]
     FulfilExpectationsOnly,
 }
@@ -194,27 +195,32 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         }
 
         let hir_id = cx.tcx.local_def_id_to_hir_id(def_id);
-        let spec = cx.tcx.lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id);
-
-        // Not enforcing, so only an `expect` needs anything from the pass. The
-        // level is queried before the body is walked, so a `--test` build pays
-        // one lookup per function, not a walk.
-        if self.mode == PassMode::FulfilExpectationsOnly && spec.level() != Level::Expect {
-            return;
-        }
-
         // Re-fetched through `tcx` for the `'tcx` lifetime on the `Body`'s
         // contents, which `body_is_instrumented`'s visitor needs.
-        if body_is_instrumented(cx, cx.tcx.hir_body(body.id())) {
+        let body = cx.tcx.hir_body(body.id());
+
+        if self.mode == PassMode::FulfilExpectationsOnly {
+            // Not enforcing, so only an `expect` needs anything from the pass.
+            // The level is queried before the body is walked, so a `--test`
+            // build pays one lookup per function, not a walk.
+            let level = cx
+                .tcx
+                .lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id)
+                .level();
+            if level == Level::Expect && !body_is_instrumented(cx, body) {
+                // Fulfil the expectation; rustc absorbs the diagnostic. A
+                // missing reason is left to the enforcing compilation to report.
+                emit_uninstrumented(cx, hir_id, def_id);
+            }
             return;
         }
 
-        if self.mode == PassMode::FulfilExpectationsOnly {
-            // Fulfil the expectation; rustc absorbs the diagnostic. A missing
-            // reason is left to the enforcing compilation to report.
-            emit_uninstrumented(cx, hir_id, def_id);
+        // Enforcing: an instrumented function needs nothing, so its level is
+        // never looked up.
+        if body_is_instrumented(cx, body) {
             return;
         }
+        let spec = cx.tcx.lint_level_spec_at_node(UNINSTRUMENTED_FN, hir_id);
 
         // An `allow` suppresses `uninstrumented_fn` by construction, so the
         // justified and unjustified cases are indistinguishable from the
