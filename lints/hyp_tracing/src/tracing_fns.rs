@@ -267,10 +267,10 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
             (Level::Allow, _) => {}
 
             // Everything else -- the `Deny` default, an explicit `warn` or
-            // `deny`, or an `expect` from the command line -- is emitted at the
-            // function's own `HirId`, so rustc resolves the level against the
-            // function and its parents, not against whichever node the pass is
-            // visiting.
+            // `deny`, or a justified `expect` (from a source attribute with a
+            // reason) -- is emitted at the function's own `HirId`, so rustc
+            // resolves the level against the function and its parents, not
+            // against whichever node the pass is visiting.
             _ => emit_uninstrumented(cx, hir_id, def_id),
         }
     }

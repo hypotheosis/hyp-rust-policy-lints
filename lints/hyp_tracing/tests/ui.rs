@@ -8,13 +8,15 @@ fn ui() {
     run("ui", Build::Library, None);
 }
 
-/// Everything under `--test` is out of scope.
+/// Everything under `--test` is out of scope, though an `expect` there is
+/// still fulfilled.
 #[test]
 fn ui_test_build() {
     run("ui_test_build", Build::TestHarness, None);
 }
 
-/// `enabled = false` with a reason: the whole workspace is exempt.
+/// `enabled = false` with a reason: the whole workspace is exempt, though an
+/// `expect` there is still fulfilled.
 #[test]
 fn ui_disabled() {
     run(

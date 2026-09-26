@@ -26,12 +26,17 @@ its own `#[test]` in `tests/ui.rs`:
 | Directory | Build | `dylint.toml` |
 |---|---|---|
 | `ui/` | `--crate-type=lib` | empty (enforce) |
-| `ui_test_build/` | `--test` | empty (enforce) |
+| `ui_test_build/` | `--test` | empty (enforce, but `--test` reports nothing) |
 | `ui_disabled/` | `--crate-type=lib` | `enabled = false` with a reason |
 | `ui_disabled_no_reason/` | `--crate-type=lib` | `enabled = false`, no reason |
 | `ui_disabled_blank_reason/` | `--crate-type=lib` | `enabled = false`, whitespace-only reason |
 | `ui_enabled_with_reason/` | `--crate-type=lib` | `enabled = true` with a reason (still enforced) |
 | `ui_bad_config/` | `--crate-type=lib` | misspelt key `enable = false` |
+
+In the two directories where the pass reports nothing, `ui_test_build/` and
+`ui_disabled/`, `expect_justified.rs` pins the one thing it still does: emit
+`uninstrumented_fn` for a function whose level is `expect`, so the expectation
+is fulfilled rather than warned about.
 
 ## Harness notes
 

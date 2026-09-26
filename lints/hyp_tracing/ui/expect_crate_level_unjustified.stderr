@@ -1,0 +1,11 @@
+error: `expect(uninstrumented_fn)` without a stated reason
+  --> $DIR/expect_crate_level_unjustified.rs:1:11
+   |
+LL | #![expect(uninstrumented_fn)]
+   |           ^^^^^^^^^^^^^^^^^
+   |
+   = help: add `reason = "..."` explaining why this function is not instrumented
+   = note: `#[deny(instrument_exemption_without_justification)]` on by default
+
+error: aborting due to 1 previous error
+

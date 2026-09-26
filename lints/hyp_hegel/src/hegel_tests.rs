@@ -224,7 +224,7 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
             // `has_reason` for what counts as one.
             (Level::Allow, LintLevelSource::Node { reason, .. }) if has_reason(reason) => {}
 
-            // Exempted in source with no reason, or an empty one: report the
+            // Exempted in source with no reason, or a blank one: report the
             // attribute.
             // `span` covers just the lint name inside the attribute, not
             // the whole `#[allow(...)]`.
@@ -235,7 +235,7 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
                 },
             ) => emit_unjustified(cx, attr_span, "allow"),
 
-            // Expected in source with no reason, or an empty one. An `expect`
+            // Expected in source with no reason, or a blank one. An `expect`
             // silences the test for as long as the attribute stays, so it is
             // an exemption and needs a reason exactly as an `allow` does.
             // Report the attribute, *and* emit `non_hegel_test` so the
@@ -259,8 +259,8 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
             (Level::Allow, _) => {}
 
             // Every other level — the `Deny` default, an explicit `#[warn]` /
-            // `#[deny]`, a justified `#[expect]`, or an `expect` from the
-            // command line — is left to rustc, which now resolves it against
+            // `#[deny]`, or a justified `#[expect]` (from a source attribute
+            // with a reason) — is left to rustc, which now resolves it against
             // this item.
             _ => emit_non_hegel_test(cx, span),
         }
