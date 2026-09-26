@@ -164,14 +164,21 @@ same `HirId`. Passing the `HirId` explicitly means `#[warn]`, `#[deny]` and
 node the pass happens to be visiting (the trap described in
 `hegel_tests.rs::check_item`).
 
-The decision table is the one `hyp_hegel` uses:
+The decision table is the one `hyp_hegel` uses, with the `Expect` row added to both:
 
 | Level / source at the function | Outcome |
 |---|---|
 | `Allow` from a source attribute, with a non-blank `reason` | accepted |
 | `Allow` from a source attribute, with no `reason` or a blank one | `instrument_exemption_without_justification` at the attribute's lint-name span |
 | `Allow` from the command line (`-A uninstrumented_fn`) | accepted: an operator decision |
+| `Expect` from a source attribute, with no `reason` or a blank one | `instrument_exemption_without_justification` at the attribute's lint-name span, **and** `uninstrumented_fn` as below, so the expectation is still fulfilled |
 | anything else | `uninstrumented_fn` at the function's `def_span`, resolved by rustc |
+
+`#[expect(...)]` needs a reason as well (decided 2026-09-26, after review). An
+`expect` silences the lint for as long as the function stays uninstrumented,
+which makes it an exemption, and every exemption must be justified. The same
+rule is applied to `hyp_hegel`'s `non_hegel_test` in this branch, to close the
+identical gap there. `crate_without_hegel_tests` is unchanged.
 
 ### 5.2 Whole workspace: `dylint.toml`
 
