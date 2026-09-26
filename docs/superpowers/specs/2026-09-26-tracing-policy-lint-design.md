@@ -198,6 +198,16 @@ reason = "CLI tool with no tracing subscriber; spans would go nowhere"
   `dylint.toml` and the parse error (for example `unknown field "enable"`), and
   lints nothing else. A misspelt switch must not silently leave the policy
   on, or silently turn it off.
+
+  That path covers errors *inside* `[hyp_tracing]`: an unknown key, a wrong
+  type, or a non-table value. A TOML *syntax* error anywhere in the file, a
+  non-table root, or a failing `cargo metadata` is caught earlier, by
+  `dylint_linting::init_config` in `register_lints`. It aborts the compile
+  with dylint's own fatal error (`could not read configuration file: ...`).
+  Both paths fail closed. The README says so.
+- Unless `DYLINT_TOML` is set, `init_config` runs `cargo metadata --no-deps`
+  once per compiled crate to find the workspace root. That is standard for
+  configurable dylint libraries, and a known per-crate cost.
 - `enabled = false` with a non-blank `reason`: the pass does nothing for this
   crate.
 - `enabled = false` with no `reason`, or a blank one:
@@ -221,6 +231,11 @@ To be documented in the README:
   does not opt out. This is a false negative.
 - **Hand-written spans do not count.** A function that already opens a span
   manually still needs `#[instrument]` or an `allow`.
+- **The justification lints can themselves be `allow`ed.** A crate-level
+  `#![allow(instrument_exemption_without_justification)]`, or
+  `-A` on the command line, silences both the unjustified-`allow` report and
+  the unjustified-`dylint.toml` report. This is the same shape as
+  `hyp_hegel`'s lints, and it is visible in review.
 - **Adoption cost.** On an existing codebase the lint fires on nearly every
   function. The expected path is a justified crate-level `allow`, removed
   module by module. The alternative is `pattern = "lints/hyp_hegel"`, which
