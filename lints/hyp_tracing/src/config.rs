@@ -31,7 +31,7 @@ impl Default for Config {
     /// No `[hyp_tracing]` table: enforce.
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: enabled_by_default(),
             reason: None,
         }
     }

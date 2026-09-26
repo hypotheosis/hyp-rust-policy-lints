@@ -44,6 +44,16 @@ fn ui_disabled_blank_reason() {
     );
 }
 
+/// A reason alone never switches the policy off.
+#[test]
+fn ui_enabled_with_reason() {
+    run(
+        "ui_enabled_with_reason",
+        Build::Library,
+        Some("[hyp_tracing]\nenabled = true\nreason = \"ignored while enabled\"\n"),
+    );
+}
+
 /// A misspelt key must fail loudly, not silently leave the policy on.
 #[test]
 fn ui_bad_config() {
@@ -92,9 +102,9 @@ fn run(src_base: &str, build: Build, dylint_toml: Option<&str>) {
     let src_base = Path::new(env!("CARGO_MANIFEST_DIR")).join(src_base);
     let mut test = dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), &src_base);
     test.rustc_flags(flags);
-    if let Some(dylint_toml) = dylint_toml {
-        test.dylint_toml(dylint_toml);
-    }
+    // Always set, so a developer's `DYLINT_TOML` or a stray `dylint.toml` in
+    // the workspace cannot change results; empty means "no table: enforce".
+    test.dylint_toml(dylint_toml.unwrap_or(""));
     test.run();
 }
 
