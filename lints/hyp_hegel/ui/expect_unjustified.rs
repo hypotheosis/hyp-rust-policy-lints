@@ -1,6 +1,6 @@
-#[expect(non_hegel_test, reason = "pins a legacy example-based check until its property test lands")]
+#[expect(non_hegel_test)]
 #[test]
-fn expectation_is_fulfilled() {
+fn unexplained_expectation() {
     assert_eq!(1 + 1, 2);
 }
 

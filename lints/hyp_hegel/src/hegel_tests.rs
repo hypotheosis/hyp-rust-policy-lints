@@ -8,6 +8,7 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint::Level;
 use rustc_session::{declare_lint, impl_lint_pass};
+use rustc_span::{Span, Symbol};
 
 declare_lint! {
     /// ### What it does
@@ -56,7 +57,9 @@ declare_lint! {
 declare_lint! {
     /// ### What it does
     ///
-    /// Checks for `allow(non_hegel_test)` that carries no `reason = "..."`.
+    /// Checks for `allow(non_hegel_test)` or `expect(non_hegel_test)` that
+    /// carries no `reason = "..."`. An `expect` is checked because it is an
+    /// exemption too: once fulfilled, it silences the test indefinitely.
     ///
     /// ### Why is this bad?
     ///
@@ -82,8 +85,8 @@ declare_lint! {
     /// ```
     pub HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
     Deny,
-    "`allow(non_hegel_test)` without a stated reason",
-    // The span this lint reports is the `allow` attribute's lint-name span. A
+    "`allow` or `expect` of `non_hegel_test` without a stated reason",
+    // The span this lint reports is the `allow`/`expect` attribute's lint-name span. A
     // consumer can generate that attribute from a macro — a `#[test]`-emitting
     // macro that also writes the exemption, say — and rustc would then cancel
     // the diagnostic before it is ever rendered. Opting in here keeps the
@@ -217,23 +220,9 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
             .lint_level_spec_at_node(NON_HEGEL_TEST, item.hir_id());
 
         match (spec.level(), spec.src) {
-            // Exempted in source with a stated reason: accepted.
-            //
-            // Only the *presence* of a non-empty reason is checked, never its
-            // quality: `reason = "n/a"` passes. That boundary is deliberate —
-            // judging whether an explanation is a real justification is not
-            // something a lint can do, and pretending otherwise would mean
-            // failing builds over prose. The empty and whitespace-only cases
-            // are excluded because they are the one degenerate form that is
-            // mechanically detectable, and `reason = ""` plainly satisfies the
-            // letter of the policy while defeating its entire purpose.
-            (
-                Level::Allow,
-                LintLevelSource::Node {
-                    reason: Some(reason),
-                    ..
-                },
-            ) if !reason.as_str().trim().is_empty() => {}
+            // Exempted in source with a stated reason: accepted. See
+            // `has_reason` for what counts as one.
+            (Level::Allow, LintLevelSource::Node { reason, .. }) if has_reason(reason) => {}
 
             // Exempted in source with no reason, or an empty one: report the
             // attribute.
@@ -244,34 +233,36 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
                 LintLevelSource::Node {
                     span: attr_span, ..
                 },
-            ) => {
-                span_lint_and_help(
-                    cx,
-                    HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
-                    attr_span,
-                    "`allow(non_hegel_test)` without a stated reason",
-                    None,
-                    "add `reason = \"...\"` explaining why a property test does not apply here",
-                );
+            ) => emit_unjustified(cx, attr_span, "allow"),
+
+            // Expected in source with no reason, or an empty one. An `expect`
+            // silences the test for as long as the attribute stays, so it is
+            // an exemption and needs a reason exactly as an `allow` does.
+            // Report the attribute, *and* emit `non_hegel_test` so the
+            // expectation is still fulfilled — otherwise rustc would add an
+            // unfulfilled-expectation warning on top of the real problem. A
+            // justified `expect` falls through to the last arm.
+            (
+                Level::Expect,
+                LintLevelSource::Node {
+                    reason,
+                    span: attr_span,
+                    ..
+                },
+            ) if !has_reason(reason) => {
+                emit_unjustified(cx, attr_span, "expect");
+                emit_non_hegel_test(cx, span);
             }
 
             // Allowed from the command line (`-A non_hegel_test`): a
             // deliberate operator decision, not a source-level exemption.
             (Level::Allow, _) => {}
 
-            // Every other level — the `Deny` default, or an explicit
-            // `#[warn]` / `#[deny]` / `#[expect]` — is left to rustc, which
-            // now resolves it against this item.
-            _ => {
-                span_lint_and_help(
-                    cx,
-                    NON_HEGEL_TEST,
-                    span,
-                    "test does not use the hegel property-testing framework",
-                    None,
-                    "rewrite this as a property test using `#[hegel::test]`",
-                );
-            }
+            // Every other level — the `Deny` default, an explicit `#[warn]` /
+            // `#[deny]`, a justified `#[expect]`, or an `expect` from the
+            // command line — is left to rustc, which now resolves it against
+            // this item.
+            _ => emit_non_hegel_test(cx, span),
         }
     }
 
@@ -299,4 +290,43 @@ impl<'tcx> LateLintPass<'tcx> for HegelTests {
             "add at least one `#[hegel::test]` property test to this crate",
         );
     }
+}
+
+/// Whether an `allow`/`expect` attribute states a reason.
+///
+/// Only the *presence* of a non-empty reason is checked, never its quality:
+/// `reason = "n/a"` passes. That boundary is deliberate — judging whether an
+/// explanation is a real justification is not something a lint can do, and
+/// pretending otherwise would mean failing builds over prose. The empty and
+/// whitespace-only cases are excluded because they are the one degenerate form
+/// that is mechanically detectable, and `reason = ""` plainly satisfies the
+/// letter of the policy while defeating its entire purpose.
+fn has_reason(reason: Option<Symbol>) -> bool {
+    reason.is_some_and(|reason| !reason.as_str().trim().is_empty())
+}
+
+/// Report `NON_HEGEL_TEST` on the test at `span`. Its level (and any `expect`
+/// it fulfils) resolves against the item being visited.
+fn emit_non_hegel_test(cx: &LateContext<'_>, span: Span) {
+    span_lint_and_help(
+        cx,
+        NON_HEGEL_TEST,
+        span,
+        "test does not use the hegel property-testing framework",
+        None,
+        "rewrite this as a property test using `#[hegel::test]`",
+    );
+}
+
+/// Report an `allow`/`expect` of `non_hegel_test` that has no reason, at the
+/// attribute's lint-name span. `attr` is the attribute's name, for the message.
+fn emit_unjustified(cx: &LateContext<'_>, attr_span: Span, attr: &str) {
+    span_lint_and_help(
+        cx,
+        HEGEL_EXEMPTION_WITHOUT_JUSTIFICATION,
+        attr_span,
+        format!("`{attr}(non_hegel_test)` without a stated reason"),
+        None,
+        "add `reason = \"...\"` explaining why a property test does not apply here",
+    );
 }
