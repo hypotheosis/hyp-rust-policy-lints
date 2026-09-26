@@ -85,11 +85,25 @@ declare_lint! {
 }
 
 #[derive(Default)]
-pub struct TracingFns;
+pub struct TracingFns {
+    /// Whether `check_fn` reports anything for the crate being compiled.
+    /// Decided once, in `check_crate`.
+    enforce: bool,
+}
 
 impl_lint_pass!(TracingFns => [UNINSTRUMENTED_FN, INSTRUMENT_EXEMPTION_WITHOUT_JUSTIFICATION]);
 
 impl<'tcx> LateLintPass<'tcx> for TracingFns {
+    fn check_crate(&mut self, cx: &LateContext<'tcx>) {
+        // A `--test` compilation is test code: `#[test]` functions,
+        // `#[cfg(test)]` helpers, integration-test crates. None of it needs a
+        // span. Production code is still checked, in the ordinary lib/bin
+        // compilation that `--all-targets` also performs -- and in the one a
+        // run *without* `--all-targets` performs, so unlike `hyp_hegel` this
+        // library does not depend on that flag.
+        self.enforce = !cx.tcx.sess.opts.test;
+    }
+
     fn check_fn(
         &mut self,
         cx: &LateContext<'tcx>,
@@ -99,6 +113,10 @@ impl<'tcx> LateLintPass<'tcx> for TracingFns {
         _span: Span,
         def_id: LocalDefId,
     ) {
+        if !self.enforce {
+            return;
+        }
+
         // Closures are not something a consumer can annotate, and a `const fn`
         // cannot take `#[instrument]` at all. An `async fn` arrives here twice
         // -- as the function (`ItemFn`/`Method`) and as its coroutine

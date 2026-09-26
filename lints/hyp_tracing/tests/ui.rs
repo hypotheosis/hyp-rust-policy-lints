@@ -8,12 +8,21 @@ fn ui() {
     run("ui", Build::Library, None);
 }
 
+/// Everything under `--test` is out of scope.
+#[test]
+fn ui_test_build() {
+    run("ui_test_build", Build::TestHarness, None);
+}
+
 /// How a fixture directory is compiled.
 #[derive(Clone, Copy)]
 enum Build {
     /// `--crate-type=lib`: the fixtures need no `fn main`, which would itself
     /// be an uninstrumented function and put noise in every `.stderr`.
     Library,
+    /// `--test`: how cargo compiles unit and integration tests. Not combined
+    /// with `--crate-type`, which a test harness overrides.
+    TestHarness,
 }
 
 fn run(src_base: &str, build: Build, dylint_toml: Option<&str>) {
@@ -35,6 +44,7 @@ fn run(src_base: &str, build: Build, dylint_toml: Option<&str>) {
     ];
     match build {
         Build::Library => flags.push("--crate-type=lib".to_owned()),
+        Build::TestHarness => flags.push("--test".to_owned()),
     }
 
     // Absolute, so compiletest's `$DIR` substitution matches only the fixture
