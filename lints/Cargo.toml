@@ -7,7 +7,7 @@ resolver = "2"
 # at once -- consumers pin `pattern = "lints/*"` -- so the libraries cannot
 # version independently: `v0.2.0` has to mean one thing.
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 
 [workspace.dependencies]
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }
