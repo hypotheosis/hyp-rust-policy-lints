@@ -13,6 +13,10 @@ version = "0.1.1"
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "09382ed3c34e091d7705f96964e303b59978533c" }
 dylint_linting = "6.0"
 dylint_testing = "6.0"
+serde = { version = "1", features = ["derive"] }
+# The real crate, not a stub: hyp_tracing's detection depends on exactly how
+# tracing-attributes assigns spans, and a stub would only test the stub.
+tracing = "0.1"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "deny"
