@@ -1,5 +1,11 @@
-use rustc_lint::LateLintPass;
+use crate::instrument_detect::body_is_instrumented;
+use clippy_utils::diagnostics::span_lint_hir_and_then;
+use rustc_hir::def_id::LocalDefId;
+use rustc_hir::intravisit::FnKind;
+use rustc_hir::{Body, FnDecl};
+use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::{declare_lint, impl_lint_pass};
+use rustc_span::Span;
 
 declare_lint! {
     /// ### What it does
@@ -81,4 +87,42 @@ pub struct TracingFns;
 
 impl_lint_pass!(TracingFns => [UNINSTRUMENTED_FN, INSTRUMENT_EXEMPTION_WITHOUT_JUSTIFICATION]);
 
-impl<'tcx> LateLintPass<'tcx> for TracingFns {}
+impl<'tcx> LateLintPass<'tcx> for TracingFns {
+    fn check_fn(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        kind: FnKind<'tcx>,
+        _decl: &'tcx FnDecl<'_>,
+        body: &'tcx Body<'_>,
+        _span: Span,
+        def_id: LocalDefId,
+    ) {
+        // Closures are not something a consumer can annotate, and a `const fn`
+        // cannot take `#[instrument]` at all. An `async fn` arrives here twice
+        // -- as the function (`ItemFn`/`Method`) and as its coroutine
+        // (`Closure`) -- and only the first is checked.
+        if matches!(kind, FnKind::Closure) || cx.tcx.is_const_fn(def_id.to_def_id()) {
+            return;
+        }
+
+        // Re-fetched through `tcx` for the `'tcx` lifetime on the `Body`'s
+        // contents, which `body_is_instrumented`'s visitor needs.
+        if body_is_instrumented(cx, cx.tcx.hir_body(body.id())) {
+            return;
+        }
+
+        let hir_id = cx.tcx.local_def_id_to_hir_id(def_id);
+        span_lint_hir_and_then(
+            cx,
+            UNINSTRUMENTED_FN,
+            hir_id,
+            cx.tcx.def_span(def_id),
+            "function is not instrumented with `#[tracing::instrument]`",
+            |diag| {
+                diag.help(
+                    "add `#[tracing::instrument]`, or exempt it with `allow(uninstrumented_fn, reason = \"...\")`",
+                );
+            },
+        );
+    }
+}
