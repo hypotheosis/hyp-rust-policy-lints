@@ -14,6 +14,46 @@ fn ui_test_build() {
     run("ui_test_build", Build::TestHarness, None);
 }
 
+/// `enabled = false` with a reason: the whole workspace is exempt.
+#[test]
+fn ui_disabled() {
+    run(
+        "ui_disabled",
+        Build::Library,
+        Some("[hyp_tracing]\nenabled = false\nreason = \"CLI tool with no tracing subscriber\"\n"),
+    );
+}
+
+/// `enabled = false` without a reason: one justification error per crate.
+#[test]
+fn ui_disabled_no_reason() {
+    run(
+        "ui_disabled_no_reason",
+        Build::Library,
+        Some("[hyp_tracing]\nenabled = false\n"),
+    );
+}
+
+/// A whitespace-only reason is no reason.
+#[test]
+fn ui_disabled_blank_reason() {
+    run(
+        "ui_disabled_blank_reason",
+        Build::Library,
+        Some("[hyp_tracing]\nenabled = false\nreason = \"   \"\n"),
+    );
+}
+
+/// A misspelt key must fail loudly, not silently leave the policy on.
+#[test]
+fn ui_bad_config() {
+    run(
+        "ui_bad_config",
+        Build::Library,
+        Some("[hyp_tracing]\nenable = false\n"),
+    );
+}
+
 /// How a fixture directory is compiled.
 #[derive(Clone, Copy)]
 enum Build {

@@ -1,0 +1,11 @@
+error: `hyp_tracing` is disabled in `dylint.toml` without a stated reason
+  --> $DIR/plain.rs:1:1
+   |
+LL | pub fn plain() {}
+   | ^
+   |
+   = help: add `reason = "..."` under `[hyp_tracing]` explaining why this workspace does not instrument its functions
+   = note: `#[deny(instrument_exemption_without_justification)]` on by default
+
+error: aborting due to 1 previous error
+

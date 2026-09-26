@@ -1,8 +1,9 @@
+use crate::config::{self, Mode};
 use crate::instrument_detect::body_is_instrumented;
 use clippy_utils::diagnostics::span_lint_hir_and_then;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{CRATE_DEF_ID, LocalDefId};
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, FnDecl};
+use rustc_hir::{Body, CRATE_HIR_ID, FnDecl};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint::Level;
@@ -95,13 +96,57 @@ impl_lint_pass!(TracingFns => [UNINSTRUMENTED_FN, INSTRUMENT_EXEMPTION_WITHOUT_J
 
 impl<'tcx> LateLintPass<'tcx> for TracingFns {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
+        self.enforce = false;
+
         // A `--test` compilation is test code: `#[test]` functions,
         // `#[cfg(test)]` helpers, integration-test crates. None of it needs a
         // span. Production code is still checked, in the ordinary lib/bin
         // compilation that `--all-targets` also performs -- and in the one a
         // run *without* `--all-targets` performs, so unlike `hyp_hegel` this
         // library does not depend on that flag.
-        self.enforce = !cx.tcx.sess.opts.test;
+        if cx.tcx.sess.opts.test {
+            return;
+        }
+
+        let config = match config::load() {
+            Ok(config) => config,
+            Err(error) => {
+                // Neither "enforce" nor "off" is a safe guess for a switch
+                // nobody can read: the build fails and says why. The toml
+                // error's `Display` ends in a whitespace-only line; trimmed.
+                cx.tcx.dcx().err(format!(
+                    "could not read `[{}]` from `dylint.toml`: {}",
+                    config::TABLE,
+                    error.to_string().trim_end()
+                ));
+                return;
+            }
+        };
+
+        match config.mode() {
+            Mode::Enforce => self.enforce = true,
+            Mode::Off => {}
+            // Reported once, at the crate root (the span
+            // `crate_without_hegel_tests` uses), and `uninstrumented_fn` stays
+            // off: the configuration is what needs fixing, and an error per
+            // function would bury it.
+            Mode::OffWithoutReason => {
+                let crate_span = cx.tcx.def_span(CRATE_DEF_ID);
+                let span = cx.tcx.sess.source_map().start_point(crate_span);
+                span_lint_hir_and_then(
+                    cx,
+                    INSTRUMENT_EXEMPTION_WITHOUT_JUSTIFICATION,
+                    CRATE_HIR_ID,
+                    span,
+                    "`hyp_tracing` is disabled in `dylint.toml` without a stated reason",
+                    |diag| {
+                        diag.help(
+                            "add `reason = \"...\"` under `[hyp_tracing]` explaining why this workspace does not instrument its functions",
+                        );
+                    },
+                );
+            }
+        }
     }
 
     fn check_fn(
